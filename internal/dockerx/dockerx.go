@@ -167,14 +167,34 @@ type Container struct {
 	State  string `json:"State"`
 	Status string `json:"Status"`
 	Ports  string `json:"Ports"`
+	// RawLabels is the comma-separated "k=v,k2=v2" string printed by ps; see
+	// ParseLabels.
+	RawLabels string `json:"Labels"`
 	// Labels is filled by Inspect-based helpers, not by ps.
 	Labels map[string]string `json:"-"`
 }
 
 // Named is a row of `docker network ls` / `docker volume ls`.
 type Named struct {
-	ID   string `json:"ID"`
-	Name string `json:"Name"`
+	ID        string `json:"ID"`
+	Name      string `json:"Name"`
+	RawLabels string `json:"Labels"`
+}
+
+// ParseLabels parses the "k=v,k2=v2" label string printed by `docker ps`,
+// `docker network ls` and `docker volume ls`. Values containing commas are
+// ambiguous in that format; our own label values never need them, and
+// ownership checks before destructive operations use inspect, not this.
+func ParseLabels(raw string) map[string]string {
+	m := map[string]string{}
+	for _, kv := range strings.Split(raw, ",") {
+		if kv == "" {
+			continue
+		}
+		k, v, _ := strings.Cut(kv, "=")
+		m[strings.TrimSpace(k)] = v
+	}
+	return m
 }
 
 func jsonLines[T any](out []byte) ([]T, error) {
