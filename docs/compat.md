@@ -131,6 +131,23 @@ Recommended `daemon.json` fragment (merge into any existing file):
 }
 ```
 
+## 9. MCP Go SDK and client-side libraries (M3)
+
+| Fact | Value | Source |
+|---|---|---|
+| Module / version | `github.com/modelcontextprotocol/go-sdk` **v1.8.0** (go 1.25), package `mcp` | src: module cache `go.mod` @ v1.8.0 |
+| Server | `mcp.NewServer(&mcp.Implementation{Name, Title, Version}, &mcp.ServerOptions{Instructions: …})`; `server.Run(ctx, &mcp.StdioTransport{})` (newline-delimited JSON on stdin/stdout) | src: `mcp/server.go` L73, L211, L1354; `mcp/transport.go` L128 |
+| Typed tools | `mcp.AddTool[In, Out](s, &mcp.Tool{Name, Description, InputSchema?, Annotations?}, func(ctx, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error))`. Input/output schemas inferred with `github.com/google/jsonschema-go` (draft 2020-12; `jsonschema:"…"` tag = description; fields without `omitempty` are required); inputs and outputs are validated | src: `mcp/server.go` L380-605 |
+| Content vs structured output | If the handler leaves `Content` nil, the SDK fills it with the JSON of `Out`; we set `Content` explicitly to the human summary. `StructuredContent` is always filled from `Out` | same |
+| Errors | A non-JSON-RPC error returned by the handler becomes `isError: true` with `err.Error()` as text and no structured content | same |
+| Nil maps/slices | Inferred schema of a slice is `["null","array"]`; of a map is `"object"` (no null), so result maps must be non-nil | src: jsonschema-go v0.4.3 `infer.go` L202-224 |
+| Tests | `mcp.NewInMemoryTransports()` (net.Pipe); connect the server first, then `mcp.NewClient(…).Connect` | src: `mcp/transport.go` L183 |
+| Roots | `roots/list` is deprecated as of protocol 2026-07-28 (SEP-2577); we use `CLAUDE_PROJECT_DIR` then cwd | src: `mcp/server.go` ServerOptions doc |
+| File lock | `github.com/gofrs/flock` **v0.13.2** (`flock(2)`; per open file, so we add an in-process mutex) | https://pkg.go.dev/github.com/gofrs/flock |
+| macOS process start time | `golang.org/x/sys/unix.SysctlKinfoProc("kern.proc.pid", pid)` → `Proc.P_starttime` (no CGO, no `ps`) | src: x/sys v0.49.0 `unix/syscall_darwin.go` L503 |
+| `docker context ls --format '{{json .}}'` | fields `Name`, `Description`, `DockerEndpoint`, `Current`, `Error` | local Docker Desktop CLI, 2026-11-13 |
+| `docker ps/network ls/volume ls --format '{{json .}}'` | `Labels` is a comma-separated `k=v,k2=v2` string | same |
+
 ## Implications for implementation
 
 1. **kind names**: validate `^[a-z0-9.-]+$` and keep names ≤ 50 chars ourselves (kind only warns above 50). Lease IDs used in `dol-<leaseid>-<name>` must be lowercase with no underscores. Pin kind v0.33.0 and kubectl v1.37.2 with sha256 checks.
