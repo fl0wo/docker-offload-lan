@@ -625,6 +625,15 @@ func (c *Core) teardownLocal(ctx context.Context, l v1.ClientLease) v1.Inventory
 		kinds = append(kinds, k.ClusterName)
 	}
 	for _, p := range l.Resources.ComposeProjects {
+		if err := d.RequireComposeOwned(tctx, p, l.ID); err != nil {
+			if v1.CodeOf(err) != v1.CodeNotOwned {
+				errs = append(errs, fmt.Sprintf("compose project %s: %v", p, err))
+			} else {
+				// The lease's own share is removed by label below.
+				c.log.Warn("not bringing down compose project with foreign resources", "lease", l.ID, "project", p, "err", err)
+			}
+			continue
+		}
 		if _, err := d.ComposeProject(tctx, p, "down", "--volumes", "--remove-orphans", "--timeout", "10"); err != nil {
 			errs = append(errs, fmt.Sprintf("compose project %s: %v", p, err))
 			continue
@@ -669,6 +678,9 @@ func (c *Core) Stop(ctx context.Context, in TargetInput) (*v1.ActionResult, erro
 	d := c.docker(l.DockerContext)
 	res := &v1.ActionResult{PlacementInfo: c.placementInfo(*l), Done: []string{}}
 	if c.hasCompose(l, t) {
+		if err := d.RequireComposeOwned(ctx, t, l.ID); err != nil {
+			return nil, err
+		}
 		if _, err := d.ComposeProject(ctx, t, "stop"); err != nil {
 			return nil, fmt.Errorf("stopping compose project %s: %w", t, err)
 		}
@@ -696,6 +708,9 @@ func (c *Core) Remove(ctx context.Context, in RemoveInput) (*v1.ActionResult, er
 	d := c.docker(l.DockerContext)
 	res := &v1.ActionResult{PlacementInfo: c.placementInfo(*l), Done: []string{}}
 	if c.hasCompose(l, t) {
+		if err := d.RequireComposeOwned(ctx, t, l.ID); err != nil {
+			return nil, err
+		}
 		args := []string{"down", "--remove-orphans"}
 		if in.Volumes {
 			args = append(args, "--volumes")

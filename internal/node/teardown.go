@@ -50,6 +50,18 @@ func (s *Server) Teardown(ctx context.Context, id string, keepSyncDirs, block bo
 
 	var keptProjects []string
 	for _, p := range l.Resources.ComposeProjects {
+		// Any client may register any project name; `compose down` must not
+		// reach resources of other leases or of the node owner. The lease's
+		// own share of a mixed project is removed by label below.
+		if err := s.docker.RequireComposeOwned(ctx, p, id); err != nil {
+			if v1.CodeOf(err) == v1.CodeNotOwned {
+				s.log.Warn("not bringing down compose project with foreign resources", "lease", id, "project", p, "err", err)
+				continue
+			}
+			errs = append(errs, errText("checking compose project %s: %v", p, err))
+			keptProjects = append(keptProjects, p)
+			continue
+		}
 		if _, err := s.docker.Run(ctx, nil, "compose", "-p", p, "down", "--volumes", "--remove-orphans", "--timeout", "10"); err != nil {
 			errs = append(errs, errText("docker compose -p %s down: %v", p, err))
 			keptProjects = append(keptProjects, p)

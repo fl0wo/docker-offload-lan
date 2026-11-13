@@ -75,5 +75,10 @@ func chownToDolGroup(path string) error {
 	if err := os.Chown(path, -1, gid); err != nil {
 		return fmt.Errorf("chown %s to group %s: %w", path, node.SocketGroup, err)
 	}
-	return os.Chmod(path, 0o2775) //nolint:gosec // group-writable by design: dol users rsync into sync_root
+	return os.Chmod(path, syncRootMode)
 }
+
+// syncRootMode lets group dol rsync into sync_root (setgid keeps new dirs in
+// the group) and keeps synced workspaces, which may contain secrets, away
+// from other local users.
+const syncRootMode = os.ModeSetgid | 0o770

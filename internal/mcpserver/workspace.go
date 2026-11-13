@@ -250,6 +250,24 @@ type ComposeUpResult struct {
 
 var forbiddenComposeArgs = []string{"-f", "--file", "-p", "--project-name", "--project-directory", "--context", "-H", "--host", "--env-file"}
 
+// forbiddenComposeArg reports whether a sets one of forbiddenComposeArgs,
+// including attached and combined short forms (`-pname`, `-dpname`), which
+// compose accepts after `up` too.
+func forbiddenComposeArg(a string) (string, bool) {
+	name, _, _ := strings.Cut(a, "=")
+	if slices.Contains(forbiddenComposeArgs, name) {
+		return name, true
+	}
+	if short, ok := strings.CutPrefix(a, "-"); ok && !strings.HasPrefix(short, "-") {
+		for _, f := range forbiddenComposeArgs {
+			if len(f) == 2 && strings.Contains(short, f[1:]) {
+				return f, true
+			}
+		}
+	}
+	return "", false
+}
+
 // ComposeUp renders, rewrites, labels, syncs and starts a compose project.
 func (c *Core) ComposeUp(ctx context.Context, in ComposeUpInput) (*ComposeUpResult, error) {
 	l, err := c.lease(in.LeaseID)
@@ -261,9 +279,8 @@ func (c *Core) ComposeUp(ctx context.Context, in ComposeUpInput) (*ComposeUpResu
 		return nil, err
 	}
 	for _, a := range in.ExtraArgs {
-		name, _, _ := strings.Cut(a, "=")
-		if slices.Contains(forbiddenComposeArgs, name) {
-			return nil, badInput("extra_args may not contain %s: dol sets files, project and context itself", name)
+		if name, bad := forbiddenComposeArg(a); bad {
+			return nil, badInput("extra_args may not contain %s (in %q): dol sets files, project and context itself", name, a)
 		}
 	}
 	files := in.Files
@@ -285,6 +302,12 @@ func (c *Core) ComposeUp(ctx context.Context, in ComposeUpInput) (*ComposeUpResu
 		return nil, err
 	}
 	project := doc.Name()
+	// `compose up` over an existing project of someone else would recreate
+	// its containers with this lease's labels, and the lease's teardown
+	// would then delete them and their volumes.
+	if err := c.docker(l.DockerContext).RequireComposeOwned(ctx, project, l.ID); err != nil {
+		return nil, err
+	}
 	res := &ComposeUpResult{PlacementInfo: c.placementInfo(*l), Project: project}
 	if l.Placement == v1.PlacementRemote {
 		remote := dolsync.RemoteDir(c.cfg.Sync.RemoteRoot, l.ID, filepath.Base(dir))
@@ -542,6 +565,19 @@ func RewriteKubeconfigServer(kubeconfig []byte, server string) ([]byte, error) {
 	}
 	if n == 0 {
 		return nil, fmt.Errorf("kubeconfig from kind has no clusters[].cluster.server")
+	}
+	// kind writes client certificates only. Credential plugins and file
+	// references would make kubectl on this machine run commands or read
+	// local files chosen by the node.
+	if users := mapGet(root.Content[0], "users"); users != nil {
+		for _, item := range users.Content {
+			for _, key := range []string{"exec", "auth-provider", "tokenFile", "client-certificate", "client-key"} {
+				if mapGet(mapGet(item, "user"), key) != nil {
+					return nil, v1.Errorf(v1.CodeKindFailed, "check the node: kind never writes these; `dol doctor` and the node agent logs",
+						"refusing kubeconfig from the node: users[].user.%s would run a command or read a file on this machine", key)
+				}
+			}
+		}
 	}
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)

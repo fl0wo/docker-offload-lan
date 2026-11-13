@@ -52,7 +52,7 @@ Keys:
 
 ## Labels are ownership, not security
 
-dol tags every resource it creates with `io.github.fl0wo.dol.*` labels and only stops or deletes resources that carry them ([ADR-0006](adr/0006-ownership-via-labels.md)). This protects your other containers from cleanup bugs. **It is not an access control.** Anyone with Docker access on the node, including any agent holding a lease, can see and change every container, labelled or not. Unlabeled resources are never deleted by default; they are only reported (`reap_unlabeled_after_s: 0`).
+dol tags every resource it creates with `io.github.fl0wo.dol.*` labels and only stops or deletes resources that carry them ([ADR-0006](adr/0006-ownership-via-labels.md)). This protects your other containers from cleanup bugs. **It is not an access control.** Anyone with Docker access on the node, including any agent holding a lease, can see and change every container, labelled or not. Unlabeled resources are never deleted by default; they are only reported (`reap_unlabeled_after_s: 0`). Compose projects are started, stopped or brought down by name only when every container, network and volume carrying that project's name also carries the lease's labels, so a project name that collides with someone else's project is refused. Kubeconfigs returned by the node are refused if they contain credential plugins (`exec`, `auth-provider`) or local file references.
 
 ## Data on the node
 
