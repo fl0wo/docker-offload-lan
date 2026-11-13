@@ -11,3 +11,7 @@ linters:
       excludes:
         - G204 # subprocess with variable args: we shell out to ssh/docker/kind by design; args are validated
         - G304 # file inclusion via variable: config/state paths are user-controlled by design
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [errcheck, gosec]

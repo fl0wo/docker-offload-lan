@@ -20,6 +20,7 @@ func main() {
 		os.Exit(1)
 	}
 	for name, b := range s {
+		//nolint:gosec // schema files are public and meant to be world-readable
 		if err := os.WriteFile(filepath.Join(os.Args[1], name), b, 0o644); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
