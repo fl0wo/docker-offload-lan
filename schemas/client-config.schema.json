@@ -115,6 +115,20 @@
         }
       },
       "additionalProperties": false
+    },
+    "proxy": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "opt-in: dol_acquire also returns docker_host, a per-lease unix socket that proxies the Docker API and injects lease labels and bind-mount rewrites (ADR-0040)"
+        },
+        "allow_external_binds": {
+          "type": "boolean",
+          "description": "remote leases: pass bind mounts outside the project directory through as node paths instead of refusing them"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",

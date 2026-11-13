@@ -293,6 +293,13 @@ func warnLine(ws []string) string {
 	return fmt.Sprintf("Warnings (%d): %s", len(ws), strings.Join(ws, " | "))
 }
 
+func proxyLine(r *v1.AcquireResult) string {
+	if r.Commands.DockerProxied == "" {
+		return ""
+	}
+	return fmt.Sprintf(" Or use `%s …`: labels and project bind mounts are then handled by the proxy.", r.Commands.DockerProxied)
+}
+
 func summarizeAcquire(r *v1.AcquireResult) string {
 	where := "LOCAL (this laptop, docker context " + r.DockerContext + ")"
 	if r.Placement == v1.PlacementRemote {
@@ -300,7 +307,7 @@ func summarizeAcquire(r *v1.AcquireResult) string {
 	}
 	return lines(
 		fmt.Sprintf("Placed %s: lease %s, %s.", where, r.LeaseID, v1.FormatBytes(r.EstMemoryBytes)),
-		fmt.Sprintf("Use `%s …` for every docker command and add label_flags to every create.", r.Commands.Docker),
+		fmt.Sprintf("Use `%s …` for every docker command and add label_flags to every create.", r.Commands.Docker)+proxyLine(r),
 		"Reason: "+r.Reason,
 		warnLine(r.Warnings),
 	)

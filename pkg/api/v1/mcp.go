@@ -18,6 +18,13 @@ type Commands struct {
 	Compose    string `json:"compose"`
 	Kubectl    string `json:"kubectl,omitempty"`
 	LabelFlags string `json:"label_flags"`
+	// DockerProxied / ComposeProxied are set only when the opt-in Docker
+	// API proxy is enabled (proxy.enabled, ADR-0040) and running for the
+	// lease in this dol mcp process: `docker -H unix://<socket>`. Through it
+	// lease labels are injected and project bind mounts rewritten, so
+	// label_flags are not needed.
+	DockerProxied  string `json:"docker_proxied,omitempty"`
+	ComposeProxied string `json:"compose_proxied,omitempty"`
 }
 
 // PlacementInfo is embedded by every tool result that can affect where things
@@ -52,6 +59,10 @@ type AcquireResult struct {
 	ExpiresAt      string            `json:"expires_at,omitempty"`
 	Pinned         bool              `json:"pinned"`
 	Attempts       []Attempt         `json:"attempts"`
+	// DockerHost is the lease's proxy socket (unix://…, ADR-0040); empty
+	// unless proxy.enabled. It lives as long as the lease in this dol mcp
+	// process.
+	DockerHost string `json:"docker_host,omitempty"`
 }
 
 // ClientLease is the client's view of a lease (remote or local), as listed by
