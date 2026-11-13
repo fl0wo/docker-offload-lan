@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	v1 "github.com/fl0wo/docker-offload-lan/pkg/api/v1"
 )
 
 // ContextDescription marks docker contexts created by dol. Contexts without
@@ -137,4 +139,61 @@ func (d *Docker) ComposeProject(ctx context.Context, project string, args ...str
 		return nil, fmt.Errorf("invalid compose project %q", project)
 	}
 	return d.run(ctx, append([]string{"compose", "-p", project}, args...)...)
+}
+
+// ComposeLabelProject is the label docker compose sets on every container,
+// network and volume of a project; `compose -p <p> down` acts on all of them.
+const ComposeLabelProject = "com.docker.compose.project"
+
+// RequireComposeOwned returns a CodeNotOwned error unless every container,
+// network and volume of compose project p carries leaseID's labels.
+// `docker compose -p p down|stop` acts on everything labeled with the project
+// name, whoever created it, so callers check this first (ADR-0006). A project
+// with no resources is owned trivially.
+func (d *Docker) RequireComposeOwned(ctx context.Context, project, leaseID string) error {
+	f := "label=" + ComposeLabelProject + "=" + project
+	type obj struct {
+		kind      ObjectKind
+		ref, name string
+	}
+	var objs []obj
+	cs, err := d.Containers(ctx, f)
+	if err != nil {
+		return err
+	}
+	for _, c := range cs {
+		objs = append(objs, obj{KindContainer, c.ID, c.Names})
+	}
+	ns, err := d.Networks(ctx, f)
+	if err != nil {
+		return err
+	}
+	for _, n := range ns {
+		objs = append(objs, obj{KindNetwork, n.ID, n.Name})
+	}
+	vs, err := d.Volumes(ctx, f)
+	if err != nil {
+		return err
+	}
+	for _, v := range vs {
+		objs = append(objs, obj{KindVolume, v.Name, v.Name})
+	}
+	var foreign []string
+	for _, o := range objs {
+		if _, err := d.RequireOwned(ctx, o.kind, o.ref, leaseID); err != nil {
+			switch v1.CodeOf(err) {
+			case v1.CodeNotFound: // removed meanwhile
+			case v1.CodeNotOwned:
+				foreign = append(foreign, string(o.kind)+" "+o.name)
+			default:
+				return err
+			}
+		}
+	}
+	if len(foreign) > 0 {
+		return v1.Errorf(v1.CodeNotOwned,
+			"pick another project_name for dol_compose_up; dol never stops or removes resources of other compose projects",
+			"compose project %q contains resources not owned by lease %s: %s", project, leaseID, strings.Join(foreign, ", "))
+	}
+	return nil
 }

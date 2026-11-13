@@ -285,6 +285,12 @@ func (c *Core) ComposeUp(ctx context.Context, in ComposeUpInput) (*ComposeUpResu
 		return nil, err
 	}
 	project := doc.Name()
+	// `compose up` over an existing project of someone else would recreate
+	// its containers with this lease's labels, and the lease's teardown
+	// would then delete them and their volumes.
+	if err := c.docker(l.DockerContext).RequireComposeOwned(ctx, project, l.ID); err != nil {
+		return nil, err
+	}
 	res := &ComposeUpResult{PlacementInfo: c.placementInfo(*l), Project: project}
 	if l.Placement == v1.PlacementRemote {
 		remote := dolsync.RemoteDir(c.cfg.Sync.RemoteRoot, l.ID, filepath.Base(dir))
