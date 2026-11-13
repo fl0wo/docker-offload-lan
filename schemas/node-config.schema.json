@@ -1,0 +1,123 @@
+{
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "description": "config schema version; must be 1"
+    },
+    "name": {
+      "type": "string"
+    },
+    "socket": {
+      "type": "string",
+      "description": "unix socket of the node API; group-owned by dol"
+    },
+    "data_dir": {
+      "type": "string"
+    },
+    "sync_root": {
+      "type": "string",
+      "description": "root of client workspace syncs; must match the client's sync.remote_root"
+    },
+    "capacity": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "auto | linux | wsl2 | macos-vm | fake"
+        },
+        "reserve_memory_gb": {
+          "type": "number"
+        },
+        "min_free_disk_gb": {
+          "type": "number"
+        },
+        "windows_memory_check": {
+          "type": "boolean"
+        },
+        "fake": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "total_memory_gb": {
+              "type": "number"
+            },
+            "available_memory_gb": {
+              "type": "number"
+            },
+            "free_disk_gb": {
+              "type": "number"
+            },
+            "host_free_memory_gb": {
+              "type": "number"
+            },
+            "host_free_disk_gb": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "leases": {
+      "type": "object",
+      "properties": {
+        "heartbeat_grace_s": {
+          "type": "integer"
+        },
+        "max_ttl_s": {
+          "type": "integer"
+        },
+        "max_active": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reaper": {
+      "type": "object",
+      "properties": {
+        "interval_s": {
+          "type": "integer"
+        },
+        "reap_unlabeled_after_s": {
+          "type": "integer",
+          "description": "0 = never delete unlabeled resources"
+        }
+      },
+      "additionalProperties": false
+    },
+    "kind": {
+      "type": "object",
+      "properties": {
+        "binary": {
+          "type": "string"
+        },
+        "port_range": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "access_mode": {
+          "type": "string",
+          "description": "tunnel | lan"
+        },
+        "lan_address": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "required": [
+    "version"
+  ],
+  "additionalProperties": false
+}

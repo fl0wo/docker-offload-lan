@@ -1,0 +1,64 @@
+# docker-offload-lan node agent. Installed by deploy/linux/install.sh.
+# The agent runs as the unprivileged `dol` user. Membership in the `docker`
+# group (for /var/run/docker.sock) is root-equivalent on this machine; see
+# docs/security.md. The hardening below limits what the agent process itself
+# can touch, while it still reaches Docker through the socket.
+[Unit]
+Description=docker-offload-lan node agent
+Documentation=https://github.com/fl0wo/docker-offload-lan
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+User=dol
+Group=dol
+SupplementaryGroups=docker
+# Reads /etc/docker-offload-lan/node.yaml (config.NodeConfigPath).
+ExecStart=/usr/local/bin/dol node serve
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=30s
+
+# /run/docker-offload-lan (node.sock, mode 0660 group dol) and
+# /var/lib/docker-offload-lan (lease DB), both owned by dol:dol.
+RuntimeDirectory=docker-offload-lan
+RuntimeDirectoryMode=0750
+StateDirectory=docker-offload-lan
+StateDirectoryMode=0750
+UMask=0007
+# docker and kind write their config under $HOME; keep it in the state dir.
+Environment=HOME=/var/lib/docker-offload-lan
+Environment=DOCKER_CONFIG=/var/lib/docker-offload-lan/.docker
+
+# Hardening (compatible with talking to dockerd over its unix socket and
+# running kind/kubectl, which only use that socket and the network).
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+# Workspace syncs (sync_root) are deleted by the reaper; "-" = ok if missing.
+ReadWritePaths=-/srv/dol
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+# AF_VSOCK: on WSL2 every Windows executable (powershell.exe for the Windows
+# free-memory check) talks to the host over vsock; without it interop fails
+# with "UtilBindVsockAnyPort: socket failed 97".
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_VSOCK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

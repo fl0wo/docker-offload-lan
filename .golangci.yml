@@ -1,0 +1,33 @@
+version: "2"
+linters:
+  enable:
+    - errorlint
+    - gosec
+    - misspell
+    - nilerr
+    - unconvert
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (*os.File).Close
+        - os.Remove
+        - os.RemoveAll
+    gosec:
+      excludes:
+        - G204 # subprocess with variable args: we shell out to ssh/docker/kind by design; args are validated
+        - G304 # file inclusion via variable: config/state paths are user-controlled by design
+        - G703 # path traversal via taint (v2.15+): same as G304; dol writes the user's own ssh/config/state files
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [errcheck, gosec, unused]
+      - path: test/integration/
+        linters: [gosec]
+      # Test helper that runs "remote" commands locally and proxies -L by design.
+      - path: internal/testutil/
+        linters: [gosec]
+      - path: internal/dockerproxy/proxytest/
+        linters: [gosec]

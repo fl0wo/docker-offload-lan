@@ -1,0 +1,21 @@
+services:
+  web:
+    image: nginx:alpine
+    build: ./web
+    ports: ["127.0.0.1:8080:80"]
+    volumes:
+      - ./data:/data
+      - cache:/cache
+      - /etc/hosts:/x/hosts:ro
+    labels:
+      a: b
+    secrets: [s1]
+volumes:
+  cache: {}
+  ext:
+    external: true
+networks:
+  back: {}
+secrets:
+  s1:
+    file: ./secret.txt
