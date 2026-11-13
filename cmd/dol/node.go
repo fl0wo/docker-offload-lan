@@ -287,7 +287,7 @@ func runNodeInit(ctx context.Context, f nodeInitFlags, changed func(string) bool
 		path  string
 		mode  os.FileMode
 		group bool
-	}{{cfg.DataDir, 0o750, false}, {cfg.SyncRoot, 0o2775, true}} {
+	}{{cfg.DataDir, 0o750, false}, {cfg.SyncRoot, 0o770, true}} {
 		if fi, err := os.Stat(d.path); err == nil && fi.IsDir() {
 			say("dir: %s exists", d.path)
 			continue
