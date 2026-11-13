@@ -475,13 +475,15 @@ func (d *Docker) CountUnlabeled(ctx context.Context) (v1.UnlabeledCounts, error)
 			c.Containers++
 		}
 	}
+	// "|{{.Name}}" keeps a line for objects without the label (an empty
+	// label alone would render as an empty line and be skipped).
 	vfmt := `{{.Label "` + v1.LabelManaged + `"}}`
-	out, err = d.run(ctx, "volume", "ls", "--format", vfmt)
+	out, err = d.run(ctx, "volume", "ls", "--format", vfmt+"|{{.Name}}")
 	if err != nil {
 		return c, err
 	}
-	for _, l := range strings.Split(string(out), "\n") {
-		if strings.TrimSpace(l) != "true" && l != "" {
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if l != "" && !strings.HasPrefix(l, "true|") {
 			c.Volumes++
 		}
 	}

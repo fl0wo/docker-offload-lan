@@ -242,7 +242,7 @@ Validate configs strictly (unknown keys are errors with a helpful message). Ship
 
 ### 7.2 Node API (over the unix socket, HTTP/1.1, JSON)
 
-Clients reach it through `ssh <host> dol node dial-stdio`. The Go client uses a custom `DialContext` that spawns that process and treats its stdio as the connection. Authorization = being able to SSH as a user in the `dol` group. The server records the SSH user (from `SSH_CONNECTION`/`USER` passed by dial-stdio) as `ssh_user` on the lease for audit.
+Clients reach it through `ssh <host> dol node dial-stdio`. The Go client uses a custom `DialContext` that spawns that process and treats its stdio as the connection. Authorization = being able to SSH as a user in the `dol` group. The server records the SSH user as `ssh_user` on the lease for audit, taken from the socket peer credentials of the `dial-stdio` process (ADR-0013).
 
 All error responses: `{"error": {"code": "...", "message": "...", "details": {...}, "hint": "..."}}`.
 
@@ -376,8 +376,9 @@ create local lease in client state; return local placement with reasons
   1. Active, unpinned leases with `now > last_heartbeat + heartbeat_grace` or `now > created + max_ttl` → `expired` → teardown.
   2. Pinned leases past an explicit `expires_at` → teardown.
   3. Resources labeled `<P>.managed=true` whose lease is unknown/released/expired → teardown (orphans).
-  4. Unlabeled resources: never deleted by default; reported in `GET /v1/capacity` details and `dol doctor`. Deleting them requires `reap_unlabeled_after_s > 0` and is logged loudly.
+  4. Unlabeled resources: never deleted by default; reported in `GET /v1/capacity` details and `dol doctor`. Deleting them requires `reap_unlabeled_after_s > 0` and is logged loudly. (v1: not implemented, report-only, see ADR-0012.)
   5. If disk free < `min_free_disk`: prune build cache and dangling images only. Never prune volumes belonging to active leases.
+- Expiry, release and reaper details beyond this section: ADR-0013.
 - Teardown order per lease: kind clusters → compose projects (`down --volumes` for lease-labeled volumes) → containers (stop, 10 s timeout, then remove) → networks → volumes → sync dir → mark `released`. Idempotent; partial failures recorded and retried next reaper pass.
 
 ### 7.7 Docker contexts and command prefixes

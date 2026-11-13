@@ -39,7 +39,7 @@ func Binary(t testing.TB) string {
 	}
 	p := filepath.Join(t.TempDir(), "ssh")
 	script := "#!/bin/sh\n" + envVar + "=1 exec '" + exe + "' \"$@\"\n"
-	if err := os.WriteFile(p, []byte(script), 0o700); err != nil {
+	if err := os.WriteFile(p, []byte(script), 0o700); err != nil { //nolint:gosec // test helper must be executable
 		t.Fatal(err)
 	}
 	return p

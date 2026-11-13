@@ -115,14 +115,14 @@ func TestTeardownRejectsBadLeaseID(t *testing.T) {
 func TestCountUnlabeled(t *testing.T) {
 	f := &fakeRunner{answers: map[string]string{
 		"ps -a --format":      "true|a\n|b\n|dol-l-aaaaaaaaaa-e2e-control-plane\n|c\n",
-		"volume ls --format":  "true\n\n",
+		"volume ls --format":  "true|mine\n|users-data\n",
 		"network ls --format": "|bridge\n|host\n|none\n|kind\ntrue|x\n|custom\n",
 	}}
 	c, err := (&Docker{R: f}).CountUnlabeled(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Containers != 2 || c.Volumes != 0 || c.Networks != 1 {
+	if c.Containers != 2 || c.Volumes != 1 || c.Networks != 1 {
 		t.Fatalf("%+v", c)
 	}
 }
