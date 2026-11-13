@@ -250,6 +250,24 @@ type ComposeUpResult struct {
 
 var forbiddenComposeArgs = []string{"-f", "--file", "-p", "--project-name", "--project-directory", "--context", "-H", "--host", "--env-file"}
 
+// forbiddenComposeArg reports whether a sets one of forbiddenComposeArgs,
+// including attached and combined short forms (`-pname`, `-dpname`), which
+// compose accepts after `up` too.
+func forbiddenComposeArg(a string) (string, bool) {
+	name, _, _ := strings.Cut(a, "=")
+	if slices.Contains(forbiddenComposeArgs, name) {
+		return name, true
+	}
+	if short, ok := strings.CutPrefix(a, "-"); ok && !strings.HasPrefix(short, "-") {
+		for _, f := range forbiddenComposeArgs {
+			if len(f) == 2 && strings.Contains(short, f[1:]) {
+				return f, true
+			}
+		}
+	}
+	return "", false
+}
+
 // ComposeUp renders, rewrites, labels, syncs and starts a compose project.
 func (c *Core) ComposeUp(ctx context.Context, in ComposeUpInput) (*ComposeUpResult, error) {
 	l, err := c.lease(in.LeaseID)
@@ -261,9 +279,8 @@ func (c *Core) ComposeUp(ctx context.Context, in ComposeUpInput) (*ComposeUpResu
 		return nil, err
 	}
 	for _, a := range in.ExtraArgs {
-		name, _, _ := strings.Cut(a, "=")
-		if slices.Contains(forbiddenComposeArgs, name) {
-			return nil, badInput("extra_args may not contain %s: dol sets files, project and context itself", name)
+		if name, bad := forbiddenComposeArg(a); bad {
+			return nil, badInput("extra_args may not contain %s (in %q): dol sets files, project and context itself", name, a)
 		}
 	}
 	files := in.Files
