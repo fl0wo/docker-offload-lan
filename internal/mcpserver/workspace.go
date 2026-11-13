@@ -459,6 +459,9 @@ func (c *Core) kubeconfigPath(leaseID, name string) string {
 	return c.store.Path("kube", leaseID+"-"+name+".yaml")
 }
 
+// kindCreateTimeout is a bit more than the node's kind operation timeout.
+const kindCreateTimeout = 16 * time.Minute
+
 // KindCreate creates a kind cluster on the lease's host and writes a
 // kubeconfig usable from this machine.
 func (c *Core) KindCreate(ctx context.Context, in KindCreateInput) (*KindCreateResult, error) {
@@ -490,10 +493,18 @@ func (c *Core) KindCreate(ctx context.Context, in KindCreateInput) (*KindCreateR
 		if err != nil {
 			return nil, err
 		}
-		kctx, cancel := context.WithTimeout(ctx, 6*time.Minute)
+		// The node allows 15 min (first cluster on a node pulls the ~1 GB
+		// kindest/node image; on a slow link that alone took >6 min on the
+		// real tower). Wait slightly longer than the node does.
+		kctx, cancel := context.WithTimeout(ctx, kindCreateTimeout)
 		resp, err := api.KindCreate(kctx, l.ID, v1.KindCreateRequest{Name: in.Name, ConfigYAML: in.ConfigYAML, AccessMode: in.AccessMode})
 		cancel()
 		if err != nil {
+			if v1.CodeOf(err) == v1.CodeTimeout {
+				return nil, v1.Errorf(v1.CodeTimeout,
+					"the first cluster on a node downloads the kindest/node image (~1 GB); check the node's network speed, then call dol_kind_create again (the download resumes from the cache) or dol_release",
+					"kind cluster %q was not ready within %s", in.Name, kindCreateTimeout)
+			}
 			return nil, c.markIfGone(ctx, l, err)
 		}
 		kc = v1.KindCluster{Name: in.Name, ClusterName: resp.Cluster, APIServerPort: resp.APIServer.Port, AccessMode: resp.AccessMode}
