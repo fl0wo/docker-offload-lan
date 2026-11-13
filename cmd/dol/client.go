@@ -105,7 +105,7 @@ func newLeasesCmd() *cobra.Command {
 			}
 			ls, errs := st.ListLeases()
 			for _, e := range errs {
-				fmt.Fprintln(cmd.ErrOrStderr(), "warning:", e)
+				outln(cmd.ErrOrStderr(), "warning:", e)
 			}
 			out := []v1.ClientLease{}
 			for _, l := range ls {
@@ -146,12 +146,12 @@ func newReleaseCmd() *cobra.Command {
 			if r.Placement == v1.PlacementRemote {
 				where = "on node " + r.Node
 			}
-			fmt.Fprintf(w, "Released %s %s.\n", r.LeaseID, where)
+			outf(w, "Released %s %s.\n", r.LeaseID, where)
 			rm := r.Removed
-			fmt.Fprintf(w, "Removed: %d container(s), %d network(s), %d volume(s), %d compose project(s), %d kind cluster(s), %d sync dir(s).\n",
+			outf(w, "Removed: %d container(s), %d network(s), %d volume(s), %d compose project(s), %d kind cluster(s), %d sync dir(s).\n",
 				len(rm.Containers), len(rm.Networks), len(rm.Volumes), len(rm.ComposeProjects), len(rm.KindClusters), len(rm.SyncDirs))
 			for _, x := range r.Warnings {
-				fmt.Fprintln(w, "warning:", x)
+				outln(w, "warning:", x)
 			}
 			return nil
 		},
@@ -160,6 +160,11 @@ func newReleaseCmd() *cobra.Command {
 	return c
 }
 
+// outf/outln write CLI output; a failed write to stdout is not actionable.
+func outf(w io.Writer, format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
+
+func outln(w io.Writer, a ...any) { _, _ = fmt.Fprintln(w, a...) }
+
 func printJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
@@ -167,11 +172,11 @@ func printJSON(w io.Writer, v any) error {
 }
 
 func printStatus(w io.Writer, st *v1.StatusResult) {
-	fmt.Fprintf(w, "Owner %s · policy %s\n\n", st.Owner, st.Policy)
+	outf(w, "Owner %s · policy %s\n\n", st.Owner, st.Policy)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NODE\tHEALTH\tARCH\tFREE MEM\tLEASES\tLATENCY\tDETAIL")
+	outln(tw, "NODE\tHEALTH\tARCH\tFREE MEM\tLEASES\tLATENCY\tDETAIL")
 	if len(st.Nodes) == 0 {
-		fmt.Fprintln(tw, "(none)\t-\t-\t-\t-\t-\tno nodes configured: everything runs locally (run `dol init`)")
+		outln(tw, "(none)\t-\t-\t-\t-\t-\tno nodes configured: everything runs locally (run `dol init`)")
 	}
 	for _, n := range st.Nodes {
 		health, arch, free, leases, detail := "DOWN", "-", "-", "-", n.Error
@@ -188,16 +193,16 @@ func printStatus(w io.Writer, st *v1.StatusResult) {
 				leases = fmt.Sprint(n.Capacity.LeasesActive)
 			}
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%dms\t%s\n", n.Name, health, arch, free, leases, n.Millis, detail)
+		outf(tw, "%s\t%s\t%s\t%s\t%s\t%dms\t%s\n", n.Name, health, arch, free, leases, n.Millis, detail)
 	}
 	_ = tw.Flush()
-	fmt.Fprintln(w)
+	outln(w)
 	if st.Local.Reachable {
-		fmt.Fprintf(w, "Local Docker: context %s, %s total, %s\n", st.Local.DockerContext, v1.FormatBytes(st.Local.MemTotalBytes), st.Local.Arch)
+		outf(w, "Local Docker: context %s, %s total, %s\n", st.Local.DockerContext, v1.FormatBytes(st.Local.MemTotalBytes), st.Local.Arch)
 	} else {
-		fmt.Fprintf(w, "Local Docker: context %s UNREACHABLE: %s\n", st.Local.DockerContext, st.Local.Error)
+		outf(w, "Local Docker: context %s UNREACHABLE: %s\n", st.Local.DockerContext, st.Local.Error)
 	}
-	fmt.Fprintf(w, "\n%d lease(s)\n", len(st.Leases))
+	outf(w, "\n%d lease(s)\n", len(st.Leases))
 	if len(st.Leases) > 0 {
 		printLeases(w, nil, st.Leases)
 	}
@@ -205,11 +210,11 @@ func printStatus(w io.Writer, st *v1.StatusResult) {
 
 func printLeases(w io.Writer, st *state.Store, ls []v1.ClientLease) {
 	if len(ls) == 0 {
-		fmt.Fprintln(w, "No leases.")
+		outln(w, "No leases.")
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "LEASE\tWHERE\tSTATE\tMEM\tWORKLOAD\tPROJECT\tSESSION\tPINNED\tCREATED")
+	outln(tw, "LEASE\tWHERE\tSTATE\tMEM\tWORKLOAD\tPROJECT\tSESSION\tPINNED\tCREATED")
 	for _, l := range ls {
 		where := "local:" + l.DockerContext
 		if l.Placement == v1.PlacementRemote {
@@ -226,7 +231,7 @@ func printLeases(w io.Writer, st *state.Store, ls []v1.ClientLease) {
 				pinned += " until " + l.ExpiresAt
 			}
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", l.ID, where, strings.ToUpper(string(l.State)),
+		outf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", l.ID, where, strings.ToUpper(string(l.State)),
 			v1.FormatBytes(l.EstMemoryBytes), l.Workload, l.Project, sess, pinned, l.CreatedAt)
 	}
 	_ = tw.Flush()

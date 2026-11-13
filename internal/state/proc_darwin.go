@@ -15,7 +15,7 @@ func ProcessStartTime(pid int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if kp.Proc.P_pid != int32(pid) {
+	if int(kp.Proc.P_pid) != pid {
 		return "", fmt.Errorf("process %d not found", pid)
 	}
 	tv := kp.Proc.P_starttime

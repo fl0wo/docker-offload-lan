@@ -62,9 +62,7 @@ func (c *Core) Status(ctx context.Context, o StatusOptions) *v1.StatusResult {
 		res.Local.Reachable, res.Local.MemTotalBytes, res.Local.Arch = true, info.MemTotal, info.GoArch()
 	})
 	wg.Wait()
-	for _, l := range c.leases(o.AllSessions) {
-		res.Leases = append(res.Leases, l)
-	}
+	res.Leases = c.leases(o.AllSessions)
 	return res
 }
 
