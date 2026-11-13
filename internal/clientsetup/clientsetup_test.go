@@ -257,12 +257,12 @@ func TestEnsureDockerContext(t *testing.T) {
 }
 
 func TestRenderHostBlockWithJump(t *testing.T) {
-	h := HostSpec{Alias: "tower", HostName: "localhost", User: "dol", Port: 2222, IdentityFile: "/k", Jump: "dol-jump@192.168.1.153"}
+	h := HostSpec{Alias: "tower", HostName: "localhost", User: "dol", Port: 2222, IdentityFile: "/k", Jump: "dol-jump@192.0.2.10"}
 	if err := h.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	b := RenderHostBlock(h)
-	for _, want := range []string{"Host tower-jump\n    HostName 192.168.1.153\n    User dol-jump\n    IdentityFile \"/k\"",
+	for _, want := range []string{"Host tower-jump\n    HostName 192.0.2.10\n    User dol-jump\n    IdentityFile \"/k\"",
 		"Host tower\n    HostName localhost\n    Port 2222\n    User dol\n    ProxyJump tower-jump\n    HostKeyAlias dol-tower"} {
 		if !strings.Contains(b, want) {
 			t.Fatalf("missing %q in:\n%s", want, b)

@@ -52,7 +52,7 @@ Non-interactive: dol init --name tower --host 192.168.1.50 --yes`,
 	fl.IntVar(&f.port, "port", doctor.SSHPort, "ssh port on the node")
 	fl.StringVar(&f.identity, "identity-file", "", "ssh private key for this node (default: your ssh defaults/agent)")
 	fl.StringVar(&f.jumpIdentity, "jump-identity-file", "", "ssh private key for the jump host (default: --identity-file)")
-	fl.StringVar(&f.jump, "jump", "", "ssh jump host user@host[:port], e.g. dol-jump@192.168.1.153 for a Windows 10 node (then --host localhost)")
+	fl.StringVar(&f.jump, "jump", "", "ssh jump host user@host[:port], e.g. dol-jump@192.0.2.10 for a Windows 10 node (then --host localhost)")
 	fl.StringVar(&f.configPath, "config", "", "client config file (default $XDG_CONFIG_HOME/docker-offload-lan/config.yaml)")
 	fl.BoolVarP(&f.yes, "yes", "y", false, "non-interactive: accept defaults, never prompt")
 	fl.BoolVar(&f.runClaudeAdd, "run-claude-add", false, "run `claude mcp add` instead of only printing it")
