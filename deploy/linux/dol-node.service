@@ -53,7 +53,10 @@ RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# AF_VSOCK: on WSL2 every Windows executable (powershell.exe for the Windows
+# free-memory check) talks to the host over vsock; without it interop fails
+# with "UtilBindVsockAnyPort: socket failed 97".
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_VSOCK
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 

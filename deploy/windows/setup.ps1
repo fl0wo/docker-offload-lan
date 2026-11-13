@@ -326,7 +326,9 @@ function Test-PortFree {
 function Register-KeepAliveTask {
     [CmdletBinding(SupportsShouldProcess = $true)] param()
     if ($NoKeepAliveTask) { Write-Step skipped 'keep-alive scheduled task (-NoKeepAliveTask)'; return }
-    $user = "$env:USERDOMAIN\$env:USERNAME"
+    # Not "$env:USERDOMAIN\$env:USERNAME": in an OpenSSH session USERDOMAIN is
+    # WORKGROUP and the task principal cannot be resolved (found on a real tower).
+    $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     $exe = Join-Path $env:WINDIR 'System32\wsl.exe'
     # A process that never exits keeps the distro (and with it systemd, sshd,
     # docker and dol-node) running; instanceIdleTimeout=-1 is the second guard.

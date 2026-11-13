@@ -187,7 +187,7 @@ func (w *WSL2) windowsFree(ctx context.Context) (int64, error) {
 	}
 	ps := w.PowerShell
 	if ps == "" {
-		ps = "powershell.exe"
+		ps = FindPowerShell(exec.LookPath, fileExists)
 	}
 	out, err := run(cctx, ps, WindowsFreeMemoryArgs...)
 	var v int64
@@ -307,6 +307,9 @@ func Detect(procDir string) (wsl bool) {
 func New(c config.CapacityConfig, rootDir RootDirFunc) (Provider, error) {
 	lin := &Linux{RootDir: rootDir}
 	wsl := func() Provider {
+		if c.WindowsMemoryCheck {
+			EnsureWSLInterop(os.Getenv, os.Setenv, filepath.Glob)
+		}
 		return &WSL2{Linux: lin, HostDiskPath: "/mnt/c", WindowsMemory: c.WindowsMemoryCheck}
 	}
 	switch c.Provider {
@@ -331,4 +334,49 @@ func New(c config.CapacityConfig, rootDir RootDirFunc) (Provider, error) {
 		return nil, errors.New("capacity.provider macos-vm is planned for v2; use linux, wsl2 or fake")
 	}
 	return nil, fmt.Errorf("unknown capacity.provider %q: use auto, linux, wsl2 or fake", c.Provider)
+}
+
+// DefaultWindowsPowerShell is powershell.exe under WSL's default automount
+// root (/mnt/c).
+const DefaultWindowsPowerShell = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+
+// FindPowerShell returns the interop powershell binary. Under systemd the
+// dol-node service's PATH has no Windows directories (WSL appends them only
+// to login shells), so a bare "powershell.exe" is not found there; fall back
+// to the absolute path (found on a real Windows 10 tower).
+func FindPowerShell(lookPath func(string) (string, error), exists func(string) bool) string {
+	if p, err := lookPath("powershell.exe"); err == nil {
+		return p
+	}
+	if exists(DefaultWindowsPowerShell) {
+		return DefaultWindowsPowerShell
+	}
+	return "powershell.exe"
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
+}
+
+// EnsureWSLInterop points WSL_INTEROP at an interop socket when it is unset.
+// WSL sets it only for processes started through wsl.exe; systemd services
+// (dol-node.service) do not get it, and every Windows executable they run
+// fails with "UtilBindVsockAnyPort: socket failed 97" (found on a real
+// Windows 10 tower). /run/WSL/1_interop is the init's socket; any works.
+func EnsureWSLInterop(getenv func(string) string, setenv func(string, string) error, glob func(string) ([]string, error)) string {
+	if v := getenv("WSL_INTEROP"); v != "" {
+		return v
+	}
+	candidates := []string{"/run/WSL/1_interop"}
+	if more, err := glob("/run/WSL/*_interop"); err == nil {
+		candidates = append(candidates, more...)
+	}
+	for _, c := range candidates {
+		if m, err := glob(c); err == nil && len(m) == 1 {
+			_ = setenv("WSL_INTEROP", c)
+			return c
+		}
+	}
+	return ""
 }

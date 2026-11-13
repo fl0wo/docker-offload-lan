@@ -203,3 +203,36 @@ func TestStatfsFreeOnTempDir(t *testing.T) {
 		t.Fatalf("got %d %v", v, err)
 	}
 }
+
+func TestFindPowerShellWithoutWindowsPath(t *testing.T) {
+	notFound := func(string) (string, error) { return "", errors.New("not found") }
+	if got := FindPowerShell(notFound, func(p string) bool { return p == DefaultWindowsPowerShell }); got != DefaultWindowsPowerShell {
+		t.Fatalf("service PATH without Windows dirs must fall back to %s, got %s", DefaultWindowsPowerShell, got)
+	}
+	found := func(string) (string, error) { return "/x/powershell.exe", nil }
+	if got := FindPowerShell(found, func(string) bool { return false }); got != "/x/powershell.exe" {
+		t.Fatal(got)
+	}
+}
+
+func TestEnsureWSLInteropForSystemdServices(t *testing.T) {
+	env := map[string]string{}
+	get := func(k string) string { return env[k] }
+	set := func(k, v string) error { env[k] = v; return nil }
+	glob := func(p string) ([]string, error) {
+		switch p {
+		case "/run/WSL/*_interop":
+			return []string{"/run/WSL/2_interop", "/run/WSL/541_interop"}, nil
+		case "/run/WSL/1_interop", "/run/WSL/2_interop", "/run/WSL/541_interop":
+			return []string{p}, nil
+		}
+		return nil, nil
+	}
+	if got := EnsureWSLInterop(get, set, glob); got != "/run/WSL/1_interop" || env["WSL_INTEROP"] != got {
+		t.Fatalf("got %q env %v", got, env)
+	}
+	env["WSL_INTEROP"] = "/run/WSL/9_interop"
+	if got := EnsureWSLInterop(get, set, glob); got != "/run/WSL/9_interop" {
+		t.Fatal("an existing WSL_INTEROP must be kept")
+	}
+}
