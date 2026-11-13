@@ -51,7 +51,15 @@ type HostSpec struct {
 	User         string
 	Port         int
 	IdentityFile string // optional
+	// Jump is "user@host[:port]" of an ssh jump host (Windows OpenSSH on a
+	// Windows 10 node with NAT WSL networking, ADR-0036). Optional.
+	Jump string
 }
+
+var jumpRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*(:[0-9]{1,5})?$`)
+
+// JumpAlias is the Host alias of a node's jump host block.
+func (h HostSpec) JumpAlias() string { return h.Alias + "-jump" }
 
 var aliasRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 var hostNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.:_-]*$`)
@@ -70,6 +78,9 @@ func (h HostSpec) Validate() error {
 	if h.Port < 1 || h.Port > 65535 {
 		return fmt.Errorf("port %d is out of range", h.Port)
 	}
+	if h.Jump != "" && !jumpRe.MatchString(h.Jump) {
+		return fmt.Errorf("jump %q: use user@host or user@host:port", h.Jump)
+	}
 	if strings.ContainsAny(h.IdentityFile, "\n\r\"") {
 		return fmt.Errorf("identity file %q contains invalid characters", h.IdentityFile)
 	}
@@ -83,10 +94,31 @@ func endMarker(alias string) string   { return "# END docker-offload-lan node " 
 func RenderHostBlock(h HostSpec) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, beginMarker(h.Alias))
+	if h.Jump != "" {
+		user, hostPort, _ := strings.Cut(h.Jump, "@")
+		jh, jp, hasPort := strings.Cut(hostPort, ":")
+		fmt.Fprintf(&b, "Host %s\n", h.JumpAlias())
+		fmt.Fprintf(&b, "    HostName %s\n", jh)
+		if hasPort {
+			fmt.Fprintf(&b, "    Port %s\n", jp)
+		}
+		fmt.Fprintf(&b, "    User %s\n", user)
+		if h.IdentityFile != "" {
+			fmt.Fprintf(&b, "    IdentityFile \"%s\"\n", h.IdentityFile)
+			fmt.Fprintln(&b, "    IdentitiesOnly yes")
+		}
+		fmt.Fprintln(&b, "    ServerAliveInterval 15")
+	}
 	fmt.Fprintf(&b, "Host %s\n", h.Alias)
 	fmt.Fprintf(&b, "    HostName %s\n", h.HostName)
 	fmt.Fprintf(&b, "    Port %d\n", h.Port)
 	fmt.Fprintf(&b, "    User %s\n", h.User)
+	if h.Jump != "" {
+		fmt.Fprintf(&b, "    ProxyJump %s\n", h.JumpAlias())
+		// HostName is localhost behind the jump: keep its host key apart
+		// from every other localhost:port in known_hosts.
+		fmt.Fprintf(&b, "    HostKeyAlias dol-%s\n", h.Alias)
+	}
 	if h.IdentityFile != "" {
 		fmt.Fprintf(&b, "    IdentityFile \"%s\"\n", h.IdentityFile)
 		fmt.Fprintln(&b, "    IdentitiesOnly yes")

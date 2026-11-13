@@ -255,3 +255,22 @@ func TestEnsureDockerContext(t *testing.T) {
 		t.Fatalf("foreign context must be refused: %v", err)
 	}
 }
+
+func TestRenderHostBlockWithJump(t *testing.T) {
+	h := HostSpec{Alias: "tower", HostName: "localhost", User: "dol", Port: 2222, IdentityFile: "/k", Jump: "dol-jump@192.168.1.153"}
+	if err := h.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	b := RenderHostBlock(h)
+	for _, want := range []string{"Host tower-jump\n    HostName 192.168.1.153\n    User dol-jump\n    IdentityFile \"/k\"",
+		"Host tower\n    HostName localhost\n    Port 2222\n    User dol\n    ProxyJump tower-jump\n    HostKeyAlias dol-tower"} {
+		if !strings.Contains(b, want) {
+			t.Fatalf("missing %q in:\n%s", want, b)
+		}
+	}
+	for _, bad := range []string{"x@y z", "-oProxyCommand=x@y", "user@host\nHost evil", "@host"} {
+		if (HostSpec{Alias: "t", HostName: "localhost", User: "dol", Port: 22, Jump: bad}).Validate() == nil {
+			t.Errorf("jump %q must be rejected", bad)
+		}
+	}
+}

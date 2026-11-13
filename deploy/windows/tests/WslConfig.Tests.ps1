@@ -14,7 +14,7 @@ Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 
 # Dot-sourcing defines the functions without running the setup.
-. (Join-Path $PSScriptRoot '..' 'setup.ps1')
+. (Join-Path (Join-Path $PSScriptRoot '..') 'setup.ps1')  # 2-arg form: Windows PowerShell 5.1
 
 $script:failures = 0
 $script:count = 0
@@ -135,6 +135,36 @@ Test-Case 'custom sizes are written' {
     $r = Merge-IniContent -Lines @('[wsl2]', 'memory=40GB') -Settings $s
     Assert-Equal 'memory=24GB' $r.Lines[1]
     Assert-True ($r.Lines -contains 'processors=8') 'processors'
+}
+
+Test-Case 'nat networking leaves networkingMode out (Windows 10)' {
+    $n = Get-DolWslConfig -Memory '40GB' -Processors 12 -Swap '8GB' -NetworkingMode 'nat'
+    Assert-Equal @('memory', 'processors', 'swap') @($n['wsl2'].Keys)
+}
+
+Test-Case 'networking mode follows the Windows build' {
+    Assert-Equal 'nat' (Resolve-NetworkingMode -Requested 'auto' -Build 19045)
+    Assert-Equal 'mirrored' (Resolve-NetworkingMode -Requested 'auto' -Build 22631)
+    Assert-Equal 'nat' (Resolve-NetworkingMode -Requested 'nat' -Build 22631)
+    $threw = $false; try { Resolve-NetworkingMode -Requested 'mirrored' -Build 19045 } catch { $threw = $true }
+    Assert-True $threw 'mirrored on Windows 10 must be refused'
+    $threw = $false; try { Resolve-NetworkingMode -Requested 'auto' -Build 18363 } catch { $threw = $true }
+    Assert-True $threw 'builds before 19041 have no WSL 2'
+}
+
+Test-Case 'jump key may only forward to the WSL sshd' {
+    $l = Get-JumpAuthorizedKeyLine -PublicKey "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIITX dol-client@mac`n" -Port 2222
+    Assert-Equal 'restrict,port-forwarding,permitopen="localhost:2222",permitopen="127.0.0.1:2222" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIITX dol-client@mac' $l
+    $threw = $false; try { Get-JumpAuthorizedKeyLine -PublicKey 'command="calc" ssh-ed25519 AAAA' -Port 2222 } catch { $threw = $true }
+    Assert-True $threw 'options smuggled in the key must be refused'
+}
+
+Test-Case 'jump sshd block allows forwarding to the WSL port only, no shell' {
+    $b = Get-JumpSshdBlock -User 'dol-jump' -Port 2222
+    Assert-True ($b -contains 'Match User dol-jump') 'match'
+    Assert-True ($b -contains '    PermitOpen localhost:2222 127.0.0.1:2222') 'permitopen'
+    Assert-True ($b -contains '    PermitTTY no') 'tty'
+    Assert-True ($b -contains '    ForceCommand cmd.exe /c exit 1') 'no shell'
 }
 
 Write-Host ''

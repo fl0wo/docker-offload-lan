@@ -1,12 +1,13 @@
 <#
 .SYNOPSIS
-    Prepares a Windows 11 machine as a docker-offload-lan node (WSL2 + Ubuntu 24.04).
+    Prepares a Windows 10/11 machine as a docker-offload-lan node (WSL2 + Ubuntu 24.04).
 
 .DESCRIPTION
     Idempotent: safe to re-run; every step prints [changed], [unchanged], [skipped]
     or [warn]. Supports -WhatIf (prints what would change, changes nothing).
 
-      1. Checks Windows 11 (22H2+ for mirrored networking) and virtualization.
+      1. Checks Windows (10 2004+ / 11) and virtualization; picks WSL networking:
+         mirrored on Windows 11 22H2+, NAT on Windows 10 (-Networking).
       2. Installs WSL and the Ubuntu-24.04 distro if missing (--no-launch); runs wsl --update.
       3. Merges (never overwrites) %USERPROFILE%\.wslconfig, with a backup:
            [wsl2]          memory, processors, swap, networkingMode=mirrored
@@ -39,6 +40,16 @@ param(
     [ValidateSet('Any', 'Private', 'Domain', 'Public')][string[]]$FirewallProfiles = @('Private', 'Domain'),
     [switch]$NoSleep,
     [switch]$NoKeepAliveTask,
+    # auto: mirrored on Windows 11 22H2+ (build 22621), nat otherwise (Windows 10).
+    # nat: the Mac reaches WSL through Windows' OpenSSH server as a jump host
+    # (ssh ProxyJump to localhost:$SshPort); no Hyper-V firewall rule (ADR-0036).
+    [ValidateSet('auto', 'mirrored', 'nat')][string]$Networking = 'auto',
+    # nat only: public key (file or "ssh-ed25519 ..." string) of the Mac for the
+    # restricted jump user. Omit to skip creating the jump user.
+    [string]$JumpPublicKey,
+    [ValidatePattern('^[a-z][a-z0-9-]{1,19}$')][string]$JumpUser = 'dol-jump',
+    # nat only: restrict Windows' OpenSSH firewall rule to these addresses (e.g. the Mac's IP).
+    [string[]]$AllowFrom,
     # Run `wsl --shutdown` at the end when .wslconfig changed (stops running distros).
     [switch]$Restart
 )
@@ -157,14 +168,15 @@ function Merge-IniContent {
 }
 
 function Get-DolWslConfig {
-    param([string]$Memory, [int]$Processors, [string]$Swap)
+    param([string]$Memory, [int]$Processors, [string]$Swap, [string]$NetworkingMode = 'mirrored')
     $s = [ordered]@{}
     $s['wsl2'] = [ordered]@{
-        memory         = $Memory
-        processors     = "$Processors"
-        swap           = $Swap
-        networkingMode = 'mirrored'
+        memory     = $Memory
+        processors = "$Processors"
+        swap       = $Swap
     }
+    # NAT is WSL's default; only mirrored needs to be written.
+    if ($NetworkingMode -eq 'mirrored') { $s['wsl2']['networkingMode'] = 'mirrored' }
     # Still experimental per docs/compat.md (2026-11).
     $s['experimental'] = [ordered]@{
         sparseVhd         = 'true'
@@ -190,9 +202,9 @@ function Assert-Admin {
 
 function Test-Prerequisite {
     $build = [Environment]::OSVersion.Version.Build
-    if ($build -lt 22000) { throw "Windows 11 is required (this is build $build)." }
-    if ($build -lt 22621) { throw "Mirrored WSL networking needs Windows 11 22H2 or newer (build 22621+); this is build $build. Run Windows Update." }
-    Write-Step unchanged "Windows 11 build $build"
+    $script:NetMode = Resolve-NetworkingMode -Requested $Networking -Build $build
+    $os = if ($build -ge 22000) { 'Windows 11' } else { 'Windows 10' }
+    Write-Step unchanged "$os build $build, WSL networking: $($script:NetMode)"
     $cs = Get-CimInstance Win32_ComputerSystem
     if ($cs.HypervisorPresent) {
         Write-Step unchanged 'virtualization: hypervisor present'
@@ -203,6 +215,48 @@ function Test-Prerequisite {
         }
         Write-Step warn 'virtualization enabled in firmware, hypervisor not running yet (WSL installation enables it; a reboot may be needed)'
     }
+}
+
+# Pure: which networking mode to use (tested in WslConfig.Tests.ps1).
+function Resolve-NetworkingMode {
+    param([string]$Requested, [int]$Build)
+    if ($Build -lt 19041) { throw "WSL 2 needs Windows 10 version 2004 (build 19041) or newer; this is build $Build. Run Windows Update." }
+    switch ($Requested) {
+        'mirrored' {
+            if ($Build -lt 22621) { throw "Mirrored WSL networking needs Windows 11 22H2 or newer (build 22621+); this is build $Build. Use -Networking nat (Windows' OpenSSH as jump host)." }
+            return 'mirrored'
+        }
+        'nat' { return 'nat' }
+        default { if ($Build -ge 22621) { return 'mirrored' } else { return 'nat' } }
+    }
+}
+
+# Pure: the authorized_keys line for the jump user: forwarding to the WSL sshd
+# only; no shell, pty, agent or X11 (restrict), then re-allow port forwarding.
+function Get-JumpAuthorizedKeyLine {
+    param([string]$PublicKey, [int]$Port)
+    $k = $PublicKey.Trim()
+    if ($k -notmatch '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com) [A-Za-z0-9+/=]+( .*)?$') {
+        throw "JumpPublicKey does not look like an OpenSSH public key: $k"
+    }
+    'restrict,port-forwarding,permitopen="localhost:{0}",permitopen="127.0.0.1:{0}" {1}' -f $Port, $k
+}
+
+# Pure: the sshd_config block for the jump user (Windows OpenSSH).
+function Get-JumpSshdBlock {
+    param([string]$User, [int]$Port)
+    @(
+        '# docker-offload-lan jump user (begin) - managed by setup.ps1'
+        "Match User $User"
+        '    AuthorizedKeysFile __PROGRAMDATA__/ssh/dol_jump_authorized_keys'
+        '    AllowTcpForwarding local'
+        "    PermitOpen localhost:$Port 127.0.0.1:$Port"
+        '    PermitTTY no'
+        '    X11Forwarding no'
+        '    AllowAgentForwarding no'
+        '    ForceCommand cmd.exe /c exit 1'
+        '# docker-offload-lan jump user (end)'
+    )
 }
 
 function Get-WslDistroName {
@@ -238,7 +292,7 @@ function Update-WslConfig {
     [CmdletBinding(SupportsShouldProcess = $true)] param()
     $path = Join-Path $env:USERPROFILE '.wslconfig'
     $lines = if (Test-Path $path) { [string[]]@(Get-Content -LiteralPath $path) } else { [string[]]@() }
-    $settings = Get-DolWslConfig -Memory $Memory -Processors $Processors -Swap $Swap
+    $settings = Get-DolWslConfig -Memory $Memory -Processors $Processors -Swap $Swap -NetworkingMode $script:NetMode
     $r = Merge-IniContent -Lines $lines -Settings $settings -Relocate
     if (-not $r.Changed) { Write-Step unchanged ".wslconfig ($path)"; return $false }
     if ($PSCmdlet.ShouldProcess($path, 'merge docker-offload-lan settings into .wslconfig')) {
@@ -249,7 +303,7 @@ function Update-WslConfig {
         }
         # WSL reads UTF-8 (no BOM needed); keep it ASCII-clean.
         [IO.File]::WriteAllLines($path, $r.Lines, [Text.UTF8Encoding]::new($false))
-        Write-Step changed ".wslconfig ($path): memory=$Memory processors=$Processors swap=$Swap mirrored, sparseVhd, autoMemoryReclaim=gradual, instanceIdleTimeout=-1"
+        Write-Step changed ".wslconfig ($path): memory=$Memory processors=$Processors swap=$Swap networking=$($script:NetMode), sparseVhd, autoMemoryReclaim=gradual, instanceIdleTimeout=-1"
         return $true
     }
     Write-Step 'would change' ".wslconfig ($path)"
@@ -277,6 +331,10 @@ function Set-SparseVhd {
 
 function Set-FirewallRule {
     [CmdletBinding(SupportsShouldProcess = $true)] param()
+    if ($script:NetMode -eq 'nat') {
+        Write-Step skipped "Hyper-V firewall rule (NAT networking: the Mac comes in through Windows' OpenSSH, see the jump host step)"
+        return
+    }
     if (-not (Get-Command New-NetFirewallHyperVRule -ErrorAction SilentlyContinue)) {
         Write-Step warn 'New-NetFirewallHyperVRule is not available (needs Windows 11 22H2+); open TCP 2222 for WSL manually'
         return
@@ -321,6 +379,78 @@ function Test-PortFree {
             Write-Step warn "TCP $SshPort is already used on Windows by $name; sshd inside WSL cannot bind it in mirrored mode. Stop that program or use -SshPort and install.sh with a matching port."
         }
     }
+}
+
+function Set-JumpHost {
+    [CmdletBinding(SupportsShouldProcess = $true)] param()
+    if ($script:NetMode -ne 'nat') { return }
+    # 1. Windows OpenSSH server
+    $cap = Get-WindowsCapability -Online -Name 'OpenSSH.Server*' | Select-Object -First 1
+    if ($cap.State -ne 'Installed') {
+        if ($PSCmdlet.ShouldProcess('OpenSSH.Server', 'Add-WindowsCapability')) {
+            Add-WindowsCapability -Online -Name $cap.Name | Out-Null
+            Write-Step changed "Windows OpenSSH server installed ($($cap.Name))"
+        } else { Write-Step 'would change' 'install the Windows OpenSSH server'; return }
+    } else { Write-Step unchanged 'Windows OpenSSH server installed' }
+    $svc = Get-Service sshd -ErrorAction SilentlyContinue
+    if ($svc -and ($svc.StartType -ne 'Automatic' -or $svc.Status -ne 'Running')) {
+        if ($PSCmdlet.ShouldProcess('sshd', 'set Automatic and start')) {
+            Set-Service sshd -StartupType Automatic; Start-Service sshd
+            Write-Step changed 'Windows sshd: automatic start, running'
+        } else { Write-Step 'would change' 'Windows sshd: automatic start, running' }
+    } elseif ($svc) { Write-Step unchanged 'Windows sshd: automatic start, running' }
+    # 2. Firewall: optionally only the Mac(s)
+    if ($AllowFrom) {
+        $rule = Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue
+        $have = if ($rule) { @(($rule | Get-NetFirewallAddressFilter).RemoteAddress) } else { @() }
+        if ($rule -and ((@($have | Sort-Object) -join ',') -ne (@($AllowFrom | Sort-Object) -join ','))) {
+            if ($PSCmdlet.ShouldProcess('OpenSSH-Server-In-TCP', "allow only $($AllowFrom -join ', ')")) {
+                Set-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -RemoteAddress $AllowFrom
+                Write-Step changed "Windows sshd firewall rule: only $($AllowFrom -join ', ')"
+            } else { Write-Step 'would change' "Windows sshd firewall rule: only $($AllowFrom -join ', ')" }
+        } elseif ($rule) { Write-Step unchanged "Windows sshd firewall rule: only $($AllowFrom -join ', ')" }
+    }
+    if (-not $JumpPublicKey) {
+        Write-Step skipped "jump user $JumpUser (pass -JumpPublicKey with the Mac's public key to create it)"
+        return
+    }
+    $pub = if (Test-Path -LiteralPath $JumpPublicKey) { (Get-Content -LiteralPath $JumpPublicKey -Raw) } else { $JumpPublicKey }
+    $line = Get-JumpAuthorizedKeyLine -PublicKey $pub -Port $SshPort
+    # 3. Local user without a usable password (random, never shown): key-only.
+    if (-not (Get-LocalUser -Name $JumpUser -ErrorAction SilentlyContinue)) {
+        if ($PSCmdlet.ShouldProcess($JumpUser, 'create local user (not an administrator)')) {
+            $bytes = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+            $pw = ConvertTo-SecureString ([Convert]::ToBase64String($bytes) + 'aA1!') -AsPlainText -Force
+            New-LocalUser -Name $JumpUser -Password $pw -PasswordNeverExpires -UserMayNotChangePassword `
+                -Description 'docker-offload-lan: ssh jump to WSL only (key-only, no shell)' | Out-Null
+            Write-Step changed "local user $JumpUser (standard user, random password never shown, key-only ssh)"
+        } else { Write-Step 'would change' "create local user $JumpUser" }
+    } else { Write-Step unchanged "local user $JumpUser" }
+    # 4. Its authorized key, forwarding to localhost:$SshPort only.
+    $keys = Join-Path $env:ProgramData 'ssh\dol_jump_authorized_keys'
+    $cur = if (Test-Path -LiteralPath $keys) { @(Get-Content -LiteralPath $keys) } else { @() }
+    if ($cur -notcontains $line) {
+        if ($PSCmdlet.ShouldProcess($keys, 'add the jump key')) {
+            [IO.File]::WriteAllLines($keys, [string[]]@($cur + $line), [Text.UTF8Encoding]::new($false))
+            & icacls.exe $keys /inheritance:r /grant 'Administrators:F' /grant 'SYSTEM:F' | Out-Null
+            Write-Step changed "jump key ($keys): may only forward to localhost:$SshPort"
+        } else { Write-Step 'would change' "jump key ($keys)" }
+    } else { Write-Step unchanged "jump key ($keys)" }
+    # 5. sshd_config Match block.
+    $cfg = Join-Path $env:ProgramData 'ssh\sshd_config'
+    $text = Get-Content -LiteralPath $cfg -Raw
+    $block = (Get-JumpSshdBlock -User $JumpUser -Port $SshPort) -join "`r`n"
+    if (-not $text.Contains($block)) {
+        if ($PSCmdlet.ShouldProcess($cfg, "add Match User $JumpUser")) {
+            Copy-Item -LiteralPath $cfg -Destination "$cfg.bak-dol-$(Get-Date -Format yyyyMMdd-HHmmss)"
+            $text = [regex]::Replace($text, '(?s)\r?\n?# docker-offload-lan jump user \(begin\).*?# docker-offload-lan jump user \(end\)\r?\n?', "`r`n")
+            [IO.File]::WriteAllText($cfg, $text.TrimEnd() + "`r`n`r`n" + $block + "`r`n", [Text.UTF8Encoding]::new($false))
+            $t = & "$env:WINDIR\System32\OpenSSH\sshd.exe" -t 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) { throw "sshd_config is invalid after the change (a backup is next to it): $t" }
+            Restart-Service sshd
+            Write-Step changed "sshd_config: Match User $JumpUser (forwarding to localhost:$SshPort only, no shell)"
+        } else { Write-Step 'would change' "sshd_config: Match User $JumpUser" }
+    } else { Write-Step unchanged "sshd_config: Match User $JumpUser" }
 }
 
 function Register-KeepAliveTask {
@@ -380,9 +510,18 @@ function Get-LanIPv4 {
 
 function Show-NextStep {
     $ip = Get-LanIPv4
-    $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-    $installWin = Join-Path $repo 'deploy\linux\install.sh'
-    $installWsl = '/mnt/' + $installWin.Substring(0, 1).ToLowerInvariant() + ($installWin.Substring(2) -replace '\\', '/')
+    # setup.ps1 may be run from a repo checkout (deploy\windows) or copied
+    # next to install.sh; fall back to a placeholder if neither is found.
+    $installWsl = '<path to install.sh inside WSL>'
+    $candidates = @((Join-Path $PSScriptRoot 'install.sh'))
+    $parent = Split-Path -Parent $PSScriptRoot
+    if ($parent) { $candidates += (Join-Path (Join-Path $parent 'linux') 'install.sh') }
+    foreach ($installWin in $candidates) {
+        if (Test-Path -LiteralPath $installWin) {
+            $installWsl = '/mnt/' + $installWin.Substring(0, 1).ToLowerInvariant() + ($installWin.Substring(2) -replace '\\', '/')
+            break
+        }
+    }
     Write-Host ''
     Write-Host "LAN IP of this machine: $(if ($ip) { $ip } else { '(not found: check Get-NetIPConfiguration)' })" -ForegroundColor Green
     Write-Host ''
@@ -396,7 +535,13 @@ function Show-NextStep {
     Write-Host "  2. Install the node inside WSL (copy your Mac's ~/.ssh/id_ed25519.pub here first):"
     Write-Host "       wsl -d $Distro -u root -- bash $installWsl --pubkey `"<contents of id_ed25519.pub>`""
     Write-Host '     If it enables systemd it asks you to run `wsl --shutdown` and re-run it once.'
-    Write-Host "  3. On the Mac:  dol init --name tower --host $(if ($ip) { $ip } else { '<LAN IP>' })"
+    $hostArg = if ($ip) { $ip } else { '<LAN IP>' }
+    if ($script:NetMode -eq 'nat') {
+        Write-Host "  3. On the Mac:  dol init --name tower --host localhost --jump $JumpUser@$hostArg"
+        Write-Host "     (ssh goes Mac -> Windows OpenSSH (${hostArg}:22, user $JumpUser) -> WSL sshd on localhost:$SshPort)"
+    } else {
+        Write-Host "  3. On the Mac:  dol init --name tower --host $hostArg"
+    }
 }
 
 function Invoke-Setup {
@@ -409,7 +554,8 @@ function Invoke-Setup {
     $script:WslConfigChanged = Update-WslConfig
     Set-SparseVhd
     Set-FirewallRule
-    Test-PortFree
+    Set-JumpHost
+    if ($script:NetMode -eq 'mirrored') { Test-PortFree }
     Register-KeepAliveTask
     Set-NoSleep
     if ($script:WslConfigChanged -and $Restart -and $PSCmdlet.ShouldProcess('WSL', 'wsl --shutdown (apply .wslconfig)')) {
