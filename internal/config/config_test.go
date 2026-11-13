@@ -135,3 +135,17 @@ func TestSchemasUpToDate(t *testing.T) {
 		}
 	}
 }
+
+func TestClientProxyOptIn(t *testing.T) {
+	c, err := LoadClient(write(t, "version: 1\n"))
+	if err != nil || c.Proxy.Enabled || c.Proxy.AllowExternalBinds {
+		t.Fatalf("proxy must default to off: %+v %v", c.Proxy, err)
+	}
+	c, err = LoadClient(write(t, "version: 1\nproxy:\n  enabled: true\n  allow_external_binds: true\n"))
+	if err != nil || !c.Proxy.Enabled || !c.Proxy.AllowExternalBinds {
+		t.Fatalf("%+v %v", c.Proxy, err)
+	}
+	if _, err := LoadClient(write(t, "version: 1\nproxy:\n  enable: true\n")); err == nil {
+		t.Fatal("unknown proxy key must be rejected")
+	}
+}

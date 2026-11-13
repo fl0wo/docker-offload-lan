@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/fl0wo/docker-offload-lan/internal/config"
+	"github.com/fl0wo/docker-offload-lan/internal/dockerproxy"
 	"github.com/fl0wo/docker-offload-lan/internal/dockerx"
 	"github.com/fl0wo/docker-offload-lan/internal/nodeclient"
 	"github.com/fl0wo/docker-offload-lan/internal/placement"
@@ -101,7 +102,8 @@ type Core struct {
 	now        func() time.Time
 
 	mu      sync.Mutex
-	ensured map[string]bool // docker contexts verified this process
+	ensured map[string]bool                // docker contexts verified this process
+	proxies map[string]*dockerproxy.Server // lease id -> Docker API proxy (ADR-0040)
 
 	bg       sync.WaitGroup
 	cancelBG context.CancelFunc
@@ -124,6 +126,7 @@ func NewCore(ctx context.Context, o Options) (*Core, error) {
 		cfg: o.Config, store: o.Store, runner: o.Docker, session: o.Session,
 		owner: o.Config.Identity.Owner, arch: cmp.Or(o.ClientArch, runtime.GOARCH),
 		fwd: o.Forwarder, log: o.Logger, now: o.Now, nodes: map[string]nodeEntry{}, ensured: map[string]bool{},
+		proxies: map[string]*dockerproxy.Server{},
 	}
 	if c.runner == nil {
 		c.runner = dockerx.ExecRunner{}
@@ -312,6 +315,7 @@ func (c *Core) Close() {
 	}
 	c.bg.Wait()
 	c.fwd.CloseAll()
+	c.stopAllProxies()
 	for _, n := range c.nodes {
 		if cl, ok := n.api.(interface{ Close() }); ok {
 			cl.Close()
@@ -331,9 +335,14 @@ func commandsFor(contextName string, labels map[string]string) v1.Commands {
 }
 
 func (c *Core) placementInfo(l v1.ClientLease) v1.PlacementInfo {
+	cmds := commandsFor(l.DockerContext, l.Labels)
+	if host := c.proxyHost(l.ID); host != "" {
+		cmds.DockerProxied = "docker -H " + v1.ShellQuote(host)
+		cmds.ComposeProxied = cmds.DockerProxied + " compose"
+	}
 	return v1.PlacementInfo{
 		Placement: l.Placement, Node: l.Node, Reason: l.Reason, LeaseID: l.ID,
-		Commands: commandsFor(l.DockerContext, l.Labels), Warnings: []string{}, NextSteps: []string{},
+		Commands: cmds, Warnings: []string{}, NextSteps: []string{},
 	}
 }
 
@@ -503,6 +512,13 @@ func (c *Core) Acquire(ctx context.Context, in AcquireInput) (*v1.AcquireResult,
 		}
 		return nil, fmt.Errorf("saving lease %s to %s: %w", cl.ID, c.store.Dir(), err)
 	}
+	if c.cfg.Proxy.Enabled {
+		host, err := c.startProxy(ctx, cl)
+		if err != nil {
+			warnings = append(warnings, "docker API proxy (proxy.enabled) could not be started; use the docker context prefix: "+err.Error())
+		}
+		res.DockerHost = host
+	}
 	res.PlacementInfo = c.placementInfo(cl)
 	res.Warnings = append(res.Warnings, warnings...)
 	res.NextSteps = nextSteps(cl, res.Commands)
@@ -527,6 +543,10 @@ func nextSteps(l v1.ClientLease, cmd v1.Commands) []string {
 	default:
 		steps = append(steps, fmt.Sprintf("Run containers with `%s run -d %s -p 127.0.0.1:<port>:<port> <image>`.", cmd.Docker, cmd.LabelFlags))
 	}
+	if cmd.DockerProxied != "" {
+		steps = append(steps, fmt.Sprintf("Alternatively use `%s` (and `%s`): it adds the lease labels to containers, networks and volumes and rewrites bind mounts under the project directory for you (call dol_sync first on a remote lease). Images built with BuildKit are not labeled.",
+			cmd.DockerProxied, cmd.ComposeProxied))
+	}
 	steps = append(steps,
 		"Add the label_flags to every `docker run`, `docker network create` and `docker volume create`; dol only stops, removes and cleans up labeled resources.",
 		"When finished, call dol_release with lease_id "+l.ID+".")
@@ -543,6 +563,7 @@ func (c *Core) Release(ctx context.Context, id string, keepSyncDir bool) (*v1.Re
 		return nil, err
 	}
 	res := &v1.ReleaseResult{LeaseID: l.ID, Placement: l.Placement, Node: l.Node, Forwards: []int{}, Warnings: []string{}}
+	c.stopProxy(l.ID)
 	closed, err := c.fwd.CloseLease(ctx, *l)
 	if err != nil {
 		res.Warnings = append(res.Warnings, "closing forwards: "+err.Error())

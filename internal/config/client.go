@@ -18,6 +18,7 @@ type ClientConfig struct {
 	Policy     Policy      `yaml:"policy" json:"policy"`
 	Forwarding Forwarding  `yaml:"forwarding" json:"forwarding"`
 	Sync       SyncConfig  `yaml:"sync" json:"sync"`
+	Proxy      ProxyConfig `yaml:"proxy" json:"proxy"`
 }
 
 type Identity struct {
@@ -52,6 +53,12 @@ type Policy struct {
 
 type Forwarding struct {
 	AutoForward bool `yaml:"auto_forward" json:"auto_forward"`
+}
+
+// ProxyConfig controls the opt-in per-lease Docker API proxy (ADR-0040).
+type ProxyConfig struct {
+	Enabled            bool `yaml:"enabled" json:"enabled" jsonschema:"opt-in: dol_acquire also returns docker_host, a per-lease unix socket that proxies the Docker API and injects lease labels and bind-mount rewrites (ADR-0040)"`
+	AllowExternalBinds bool `yaml:"allow_external_binds" json:"allow_external_binds" jsonschema:"remote leases: pass bind mounts outside the project directory through as node paths instead of refusing them"`
 }
 
 type SyncConfig struct {
