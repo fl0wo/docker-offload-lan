@@ -90,6 +90,7 @@ type Server struct {
 	unlabeled     v1.UnlabeledCounts
 	unlabeledAt   time.Time
 	dockerProblem string
+	dockerProbeAt time.Time // last docker liveness probe made by health
 }
 
 const metaDraining = "draining"
@@ -385,7 +386,8 @@ func (s *Server) activeLease(ctx context.Context, id string) (*v1.Lease, *v1.Err
 
 // ---- health & capacity -----------------------------------------------------
 
-func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	s.probeDocker(r.Context())
 	h := v1.Health{
 		Status: "ok", Version: version.Version, APIVersion: v1.APIVersion, Node: s.cfg.Name,
 		OS: runtime.GOOS, Arch: runtime.GOARCH, Provider: s.prov.Name(), Time: s.now(),
@@ -472,6 +474,29 @@ func (s *Server) unlabeledCounts(ctx context.Context) v1.UnlabeledCounts {
 	s.unlabeled, s.unlabeledAt = nc, time.Now()
 	s.statMu.Unlock()
 	return nc
+}
+
+// probeDocker refreshes dockerProblem at most every 10 s (bounded to 1 s) so
+// health never reports "ok" for a node whose daemon is down: otherwise a
+// freshly started agent looked healthy until the first reaper pass and
+// placement would send work to a node that cannot run it.
+func (s *Server) probeDocker(ctx context.Context) {
+	s.statMu.Lock()
+	fresh := !s.dockerProbeAt.IsZero() && time.Since(s.dockerProbeAt) < 10*time.Second
+	if !fresh {
+		s.dockerProbeAt = time.Now()
+	}
+	s.statMu.Unlock()
+	if fresh {
+		return
+	}
+	pctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	_, err := s.docker.Info(pctx)
+	if err != nil && pctx.Err() != nil {
+		return // slow, not down: keep the last known state
+	}
+	s.setDockerProblem(err)
 }
 
 func (s *Server) setDockerProblem(err error) {
