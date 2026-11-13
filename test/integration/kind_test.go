@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fl0wo/docker-offload-lan/test/integration/harness"
 	v1 "github.com/fl0wo/docker-offload-lan/pkg/api/v1"
+	"github.com/fl0wo/docker-offload-lan/test/integration/harness"
 )
 
 func TestGoldenPathKind(t *testing.T) {
