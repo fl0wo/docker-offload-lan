@@ -50,7 +50,7 @@ func TestDeadSessionCleanup(t *testing.T) {
 	}
 
 	l1 := h.putLease("l-aaaaaaaaaa", v1.PlacementLocal, dead.ID, false)
-	l2 := h.putLease("l-bbbbbbbbbb", v1.PlacementLocal, dead.ID, true)          // pinned: kept
+	l2 := h.putLease("l-bbbbbbbbbb", v1.PlacementLocal, dead.ID, true)         // pinned: kept
 	l3 := h.putLease("l-cccccccccc", v1.PlacementLocal, "s-norecordxx", false) // no session record: dead
 	l4 := h.putLease("l-dddddddddd", v1.PlacementLocal, live.ID, false)        // live: kept
 	for _, l := range []v1.ClientLease{l1, l2, l3, l4} {
