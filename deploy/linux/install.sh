@@ -123,7 +123,9 @@ run() { # run a mutating command (skipped with --dry-run)
   if [[ $DRY_RUN -eq 1 ]]; then echo "  would run: $*"; return 0; fi
   "$@"
 }
-tmpdir="$(mktemp -d)"
+# Not /tmp: on a WSL distro's first boot systemd may mount a fresh tmpfs over
+# /tmp while this script runs, hiding files we just wrote there.
+tmpdir="$(mktemp -d /var/tmp/dol-install.XXXXXX)"
 trap 'rm -rf "$tmpdir"' EXIT
 
 # put_file <path> <mode> <owner:group> <label>   (content on stdin)
@@ -131,16 +133,18 @@ trap 'rm -rf "$tmpdir"' EXIT
 # file changed (or would change), 1 if unchanged.
 put_file() {
   local path="$1" mode="$2" owner="$3" label="$4" new="$tmpdir/put.$RANDOM"
-  cat >"$new"
+  # Callers use put_file in `if` / `|| true`, where bash ignores `set -e`:
+  # every step that can fail must abort explicitly.
+  cat >"$new" || die "writing a temp file for $path failed"
   if [[ -f "$path" ]] && cmp -s "$new" "$path" && [[ "$(stat -c '%a %U:%G' "$path")" == "${mode#0} $owner" ]]; then
     report unchanged "$label ($path)"
     return 1
   fi
   report "$(changed_or_would)" "$label ($path)"
   if [[ $DRY_RUN -eq 0 ]]; then
-    mkdir -p "$(dirname "$path")"
-    install -m "$mode" -o "${owner%%:*}" -g "${owner##*:}" "$new" "$path.dol-tmp"
-    mv -f "$path.dol-tmp" "$path"
+    mkdir -p "$(dirname "$path")" || die "creating $(dirname "$path") failed"
+    install -m "$mode" -o "${owner%%:*}" -g "${owner##*:}" "$new" "$path.dol-tmp" || die "writing $path failed"
+    mv -f "$path.dol-tmp" "$path" || die "replacing $path failed"
   fi
   return 0
 }
@@ -266,6 +270,11 @@ EOF
 DOCKER_RESTART_NEEDED=0
 step_daemon_json() {
   local frag merged
+  if ! have jq; then
+    # Only possible with --dry-run: the base packages step installs jq.
+    report "$(changed_or_would)" "Docker daemon.json (jq not installed yet; merged after the base packages step)"
+    return
+  fi
   frag="$(jq -n --arg max "$BUILDKIT_MAX_USED" '{
     "log-driver": "local",
     "log-opts": {"max-size": "20m", "max-file": "5"},
