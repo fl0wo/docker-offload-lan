@@ -185,9 +185,19 @@ func TestClientNodeAgentProblems(t *testing.T) {
 		{"skew fail", func() *fakeAPI { a := healthyAPI(now); a.h.Time = now.Add(-5 * time.Minute); return a }(), "clock-skew", StatusFail, "behind"},
 		{"not accepting", func() *fakeAPI { a := healthyAPI(now); a.c.Accepting = false; a.c.Reason = "draining"; return a }(), "capacity", StatusWarn, "draining"},
 		{"host disk low", func() *fakeAPI { a := healthyAPI(now); a.c.Disk.HostFreeBytes = 10 * v1.GiB; return a }(), "disk", StatusFail, "Windows C:"},
-		{"disk close", func() *fakeAPI { a := healthyAPI(now); a.c.Disk.HostFreeBytes = 0; a.c.Disk.FreeBytes = 45 * v1.GiB; return a }(), "disk", StatusWarn, "close"},
+		{"disk close", func() *fakeAPI {
+			a := healthyAPI(now)
+			a.c.Disk.HostFreeBytes = 0
+			a.c.Disk.FreeBytes = 45 * v1.GiB
+			return a
+		}(), "disk", StatusWarn, "close"},
 		{"unlabeled", func() *fakeAPI { a := healthyAPI(now); a.c.Unlabeled.Containers = 3; return a }(), "unlabeled", StatusInfo, "3 container"},
-		{"degraded", func() *fakeAPI { a := healthyAPI(now); a.h.Status = "degraded"; a.h.Problems = []string{"docker down"}; return a }(), "node-agent", StatusWarn, "docker down"},
+		{"degraded", func() *fakeAPI {
+			a := healthyAPI(now)
+			a.h.Status = "degraded"
+			a.h.Problems = []string{"docker down"}
+			return a
+		}(), "node-agent", StatusWarn, "docker down"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
