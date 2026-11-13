@@ -20,9 +20,9 @@ import (
 )
 
 type initFlags struct {
-	name, host, user, identity, jump, configPath string
-	port                                         int
-	yes, runClaudeAdd, skipDoctor, skipSSH       bool
+	name, host, user, identity, jump, jumpIdentity, configPath string
+	port                                                       int
+	yes, runClaudeAdd, skipDoctor, skipSSH                     bool
 }
 
 func newInitCmd() *cobra.Command {
@@ -51,6 +51,7 @@ Non-interactive: dol init --name tower --host 192.168.1.50 --yes`,
 	fl.StringVar(&f.user, "user", doctor.NodeUser, "ssh user on the node")
 	fl.IntVar(&f.port, "port", doctor.SSHPort, "ssh port on the node")
 	fl.StringVar(&f.identity, "identity-file", "", "ssh private key for this node (default: your ssh defaults/agent)")
+	fl.StringVar(&f.jumpIdentity, "jump-identity-file", "", "ssh private key for the jump host (default: --identity-file)")
 	fl.StringVar(&f.jump, "jump", "", "ssh jump host user@host[:port], e.g. dol-jump@192.168.1.153 for a Windows 10 node (then --host localhost)")
 	fl.StringVar(&f.configPath, "config", "", "client config file (default $XDG_CONFIG_HOME/docker-offload-lan/config.yaml)")
 	fl.BoolVarP(&f.yes, "yes", "y", false, "non-interactive: accept defaults, never prompt")
@@ -116,7 +117,7 @@ func runInit(cmd *cobra.Command, f initFlags) error {
 	if f.configPath == "" {
 		f.configPath = config.ClientConfigPath()
 	}
-	spec := clientsetup.HostSpec{Alias: f.name, HostName: f.host, User: f.user, Port: f.port, IdentityFile: f.identity, Jump: f.jump}
+	spec := clientsetup.HostSpec{Alias: f.name, HostName: f.host, User: f.user, Port: f.port, IdentityFile: f.identity, Jump: f.jump, JumpIdentityFile: f.jumpIdentity}
 	if err := spec.Validate(); err != nil {
 		return err
 	}

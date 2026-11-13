@@ -66,6 +66,18 @@ $script:WslVmCreatorId = '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}'
 $script:FirewallRuleName = "dol-ssh-$SshPort"
 $script:TaskName = 'docker-offload-lan keep WSL alive'
 
+# Runs a native program and returns its combined output as one string.
+# Windows PowerShell 5.1 turns any stderr line of a native command redirected
+# with 2>&1 into an error record, which is fatal under ErrorActionPreference
+# Stop (found on a real Windows 10 tower: `wsl --set-sparse` prints a warning).
+function Invoke-Native {
+    param([string]$FilePath, [string[]]$ArgumentList)
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { (& $FilePath @ArgumentList 2>&1 | ForEach-Object { "$_" }) -join "`n" }
+    finally { $ErrorActionPreference = $old }
+}
+
 function Write-Step {
     param([ValidateSet('changed', 'unchanged', 'skipped', 'warn', 'would change')][string]$State, [string]$Message)
     $color = @{ 'changed' = 'Green'; 'unchanged' = 'DarkGray'; 'skipped' = 'DarkGray'; 'warn' = 'Yellow'; 'would change' = 'Cyan' }[$State]
@@ -285,7 +297,7 @@ function Install-WslDistro {
         Write-Step 'would change' "install WSL distro $Distro"
     }
     if ($PSCmdlet.ShouldProcess('WSL', 'wsl --update')) {
-        $u = & wsl.exe --update 2>&1 | Out-String
+        $u = Invoke-Native wsl.exe @('--update')
         if ($LASTEXITCODE -ne 0) { Write-Step warn "wsl --update failed: $($u.Trim())" }
         elseif ($u -match 'already|bereits|latest|most recent') { Write-Step unchanged 'WSL is up to date' }
         else { Write-Step changed "WSL updated: $($u.Trim())" }
@@ -323,11 +335,11 @@ function Set-SparseVhd {
     $vhd = Join-Path (Get-ItemProperty $key.PSPath).BasePath 'ext4.vhdx'
     $vhd = $vhd -replace '^\\\\\?\\', ''
     if (-not (Test-Path -LiteralPath $vhd)) { Write-Step skipped "sparse VHD ($vhd not found)"; return }
-    $q = & fsutil.exe sparse queryflag $vhd 2>&1 | Out-String
+    $q = Invoke-Native fsutil.exe @('sparse', 'queryflag', $vhd)
     if ($q -notmatch 'NOT') { Write-Step unchanged "sparse VHD ($vhd)"; return }
     if ($PSCmdlet.ShouldProcess($vhd, "wsl --terminate $Distro; wsl --manage $Distro --set-sparse true")) {
         & wsl.exe --terminate $Distro | Out-Null
-        $o = & wsl.exe --manage $Distro --set-sparse true 2>&1 | Out-String
+        $o = Invoke-Native wsl.exe @('--manage', $Distro, '--set-sparse', 'true')
         if ($LASTEXITCODE -ne 0) { Write-Step warn "could not make the VHD sparse (needs WSL 2.5+): $($o.Trim())" }
         else { Write-Step changed "sparse VHD ($vhd): freed disk space now returns to Windows" }
     }
@@ -449,7 +461,7 @@ function Set-JumpHost {
             Copy-Item -LiteralPath $cfg -Destination "$cfg.bak-dol-$(Get-Date -Format yyyyMMdd-HHmmss)"
             $text = [regex]::Replace($text, '(?s)\r?\n?# docker-offload-lan jump user \(begin\).*?# docker-offload-lan jump user \(end\)\r?\n?', "`r`n")
             [IO.File]::WriteAllText($cfg, $text.TrimEnd() + "`r`n`r`n" + $block + "`r`n", [Text.UTF8Encoding]::new($false))
-            $t = & "$env:WINDIR\System32\OpenSSH\sshd.exe" -t 2>&1 | Out-String
+            $t = Invoke-Native "$env:WINDIR\System32\OpenSSH\sshd.exe" @('-t')
             if ($LASTEXITCODE -ne 0) { throw "sshd_config is invalid after the change (a backup is next to it): $t" }
             Restart-Service sshd
             Write-Step changed "sshd_config: Match User $JumpUser (forwarding to localhost:$SshPort only, no shell)"
@@ -466,16 +478,18 @@ function Register-WslLsoTask {
         return
     }
     if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) { Write-Step unchanged "scheduled task '$name'"; return }
-    # The adapter is recreated with the WSL VM; wait for it, then switch LSO off.
-    $cmd = 'for ($i = 0; $i -lt 120; $i++) { if (Get-NetAdapter -Name ''vEthernet (WSL)'' -ErrorAction SilentlyContinue) { Disable-NetAdapterLso -Name ''vEthernet (WSL)'' -IPv4 -IPv6; break }; Start-Sleep -Seconds 5 }'
-    if ($PSCmdlet.ShouldProcess($name, 'register scheduled task (SYSTEM, at startup): disable LSO on vEthernet (WSL)')) {
+    # The adapter is recreated with every WSL VM start (boot, `wsl --shutdown`),
+    # so check every 5 minutes and switch LSO off whenever it is back on.
+    $cmd = '$a = Get-NetAdapterLso -Name ''vEthernet (WSL)'' -ErrorAction SilentlyContinue; if ($a -and ($a.IPv4Enabled -or $a.IPv6Enabled)) { Disable-NetAdapterLso -Name ''vEthernet (WSL)'' -IPv4 -IPv6 }'
+    if ($PSCmdlet.ShouldProcess($name, 'register scheduled task (SYSTEM, at startup and every 5 min): disable LSO on vEthernet (WSL)')) {
         $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -NonInteractive -Command `"$cmd`""
-        $trigger = New-ScheduledTaskTrigger -AtStartup
+        $triggers = @((New-ScheduledTaskTrigger -AtStartup), (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)))
         $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-        Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal `
+        $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        Register-ScheduledTask -TaskName $name -Action $action -Trigger $triggers -Principal $principal -Settings $settings `
             -Description 'docker-offload-lan: disable Large Send Offload on the WSL adapter (slow downloads inside WSL otherwise).' | Out-Null
         if (Get-NetAdapter -Name 'vEthernet (WSL)' -ErrorAction SilentlyContinue) { Disable-NetAdapterLso -Name 'vEthernet (WSL)' -IPv4 -IPv6 }
-        Write-Step changed "scheduled task '$name' (and LSO off on vEthernet (WSL) now)"
+        Write-Step changed "scheduled task '$name' (at startup and every 5 min; LSO off on vEthernet (WSL) now)"
     } else { Write-Step 'would change' "scheduled task '$name'" }
 }
 
@@ -559,6 +573,8 @@ function Show-NextStep {
     Write-Host 'Next steps:'
     if ($script:WslConfigChanged -and -not $Restart) {
         Write-Host '  0. Apply .wslconfig:  wsl --shutdown   (or re-run with -Restart)'
+    } elseif (-not $script:WslConfigChanged) {
+        Write-Host '  0. If .wslconfig changed in an earlier run, apply it with:  wsl --shutdown'
     }
     if ($script:NeedsFirstLaunch) {
         Write-Host "  1. Open the distro once to create your Linux user:  wsl -d $Distro"
@@ -568,8 +584,9 @@ function Show-NextStep {
     Write-Host '     If it enables systemd it asks you to run `wsl --shutdown` and re-run it once.'
     $hostArg = if ($ip) { $ip } else { '<LAN IP>' }
     if ($script:NetMode -eq 'nat') {
-        Write-Host "  3. On the Mac:  dol init --name tower --host localhost --jump $JumpUser@$hostArg"
-        Write-Host "     (ssh goes Mac -> Windows OpenSSH (${hostArg}:22, user $JumpUser) -> WSL sshd on localhost:$SshPort)"
+        $ju = if ($JumpPublicKey) { $JumpUser } else { '<windows-user>' }
+        Write-Host "  3. On the Mac:  dol init --name tower --host localhost --jump $ju@$hostArg"
+        Write-Host "     (ssh goes Mac -> Windows OpenSSH (${hostArg}:22, user $ju) -> WSL sshd on localhost:$SshPort)"
     } else {
         Write-Host "  3. On the Mac:  dol init --name tower --host $hostArg"
     }

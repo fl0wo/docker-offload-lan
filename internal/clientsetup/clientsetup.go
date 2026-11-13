@@ -54,6 +54,8 @@ type HostSpec struct {
 	// Jump is "user@host[:port]" of an ssh jump host (Windows OpenSSH on a
 	// Windows 10 node with NAT WSL networking, ADR-0036). Optional.
 	Jump string
+	// JumpIdentityFile is the key for the jump host; default IdentityFile.
+	JumpIdentityFile string
 }
 
 var jumpRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*(:[0-9]{1,5})?$`)
@@ -81,7 +83,7 @@ func (h HostSpec) Validate() error {
 	if h.Jump != "" && !jumpRe.MatchString(h.Jump) {
 		return fmt.Errorf("jump %q: use user@host or user@host:port", h.Jump)
 	}
-	if strings.ContainsAny(h.IdentityFile, "\n\r\"") {
+	if strings.ContainsAny(h.IdentityFile+h.JumpIdentityFile, "\n\r\"") {
 		return fmt.Errorf("identity file %q contains invalid characters", h.IdentityFile)
 	}
 	return nil
@@ -103,8 +105,8 @@ func RenderHostBlock(h HostSpec) string {
 			fmt.Fprintf(&b, "    Port %s\n", jp)
 		}
 		fmt.Fprintf(&b, "    User %s\n", user)
-		if h.IdentityFile != "" {
-			fmt.Fprintf(&b, "    IdentityFile \"%s\"\n", h.IdentityFile)
+		if jk := cmpOr(h.JumpIdentityFile, h.IdentityFile); jk != "" {
+			fmt.Fprintf(&b, "    IdentityFile \"%s\"\n", jk)
 			fmt.Fprintln(&b, "    IdentitiesOnly yes")
 		}
 		fmt.Fprintln(&b, "    ServerAliveInterval 15")
@@ -495,4 +497,11 @@ var ClaudeMCPAddArgs = []string{"mcp", "add", "-s", "user", "docker-offload-lan"
 func ClaudeMCPRegistered(ctx context.Context, r doctor.Runner) bool {
 	_, _, err := r.Run(ctx, "claude", "mcp", "get", "docker-offload-lan")
 	return err == nil
+}
+
+func cmpOr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
