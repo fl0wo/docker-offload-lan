@@ -1,0 +1,125 @@
+{
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "description": "config schema version; must be 1"
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "owner": {
+          "type": "string",
+          "description": "owner label; default $USER@$(hostname -s)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "nodes": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "node name (lowercase letters, digits, -)"
+          },
+          "ssh_host": {
+            "type": "string",
+            "description": "ssh destination, ideally an alias from ~/.ssh/config"
+          },
+          "docker_context": {
+            "type": "string",
+            "description": "docker context managed by dol; default dol-\u003cname\u003e"
+          },
+          "priority": {
+            "type": "integer",
+            "description": "higher is tried first; default 100"
+          },
+          "wake_on_lan": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "properties": {
+              "mac": {
+                "type": "string"
+              },
+              "broadcast": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "local": {
+      "type": "object",
+      "properties": {
+        "docker_context": {
+          "type": "string",
+          "description": "auto | a docker context name"
+        },
+        "max_memory_gb": {
+          "type": "number",
+          "description": "advisory: warn when a local fallback exceeds this"
+        }
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "prefer": {
+          "type": "string",
+          "description": "remote | local"
+        },
+        "fallback": {
+          "type": "string",
+          "description": "always | if_capacity | never"
+        },
+        "health_timeout_ms": {
+          "type": "integer"
+        },
+        "lease_request_timeout_ms": {
+          "type": "integer"
+        },
+        "heartbeat_interval_s": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "forwarding": {
+      "type": "object",
+      "properties": {
+        "auto_forward": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "sync": {
+      "type": "object",
+      "properties": {
+        "remote_root": {
+          "type": "string"
+        },
+        "respect_gitignore": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "required": [
+    "version"
+  ],
+  "additionalProperties": false
+}

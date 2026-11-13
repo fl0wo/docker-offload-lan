@@ -1,0 +1,33 @@
+version: 2
+project_name: docker-offload-lan
+builds:
+  - id: dol
+    main: ./cmd/dol
+    binary: dol
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X github.com/fl0wo/docker-offload-lan/internal/version.Version={{.Version}}
+      - -X github.com/fl0wo/docker-offload-lan/internal/version.Commit={{.ShortCommit}}
+archives:
+  - formats: [tar.gz]
+    name_template: "dol_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [LICENSE, NOTICE, README.md, rules/agent.md, deploy/**/*]
+checksum:
+  name_template: checksums.txt
+changelog:
+  use: github
+brews:
+  - name: dol
+    repository:
+      owner: fl0wo
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://github.com/fl0wo/docker-offload-lan
+    description: Run your coding agents' Docker workloads on another machine on your LAN
+    license: Apache-2.0
+    test: |
+      system "#{bin}/dol", "--version"

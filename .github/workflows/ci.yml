@@ -1,0 +1,47 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: schemas up to date
+        run: go generate ./internal/config && git diff --exit-code schemas/
+      - name: static binaries without cgo
+        run: |
+          for t in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do
+            CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -o /dev/null ./cmd/dol
+          done
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+  integration:
+    # Containerized fake node (sshd + dockerd + dol node serve), see test/integration.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: DOL_INTEGRATION=1 go test -race -count=1 -timeout 20m ./test/integration/...
