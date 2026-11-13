@@ -11,9 +11,13 @@ COPY install.sh dol-node.service /opt/dol/deploy/
 RUN /opt/dol/deploy/install.sh --container-mode --no-dol --node-name it --skip-doctor \
  && rm -rf /var/lib/apt/lists/*
 
-# pam_loginuid cannot always set the login uid inside containers; it is
-# irrelevant here. (Test image only; real nodes keep the distro default.)
-RUN sed -i 's/^session\s\+required\s\+pam_loginuid.so/session optional pam_loginuid.so/' /etc/pam.d/sshd
+# Test image only (real nodes keep the defaults):
+# - pam_loginuid cannot always set the login uid inside containers.
+# - CI runners have far less than the default 30 GB free; install.sh never
+#   overwrites node.yaml, so this edit survives later install.sh runs.
+RUN sed -i 's/^session\s\+required\s\+pam_loginuid.so/session optional pam_loginuid.so/' /etc/pam.d/sshd \
+ && sed -i -e 's/^\(\s*min_free_disk_gb:\).*/\1 1/' -e 's/^\(\s*reserve_memory_gb:\).*/\1 0.5/' /etc/docker-offload-lan/node.yaml \
+ && grep -q 'min_free_disk_gb: 1' /etc/docker-offload-lan/node.yaml
 
 # 2. The dol binary (cross-compiled by the harness). Second install.sh run:
 #    everything else must report "unchanged".
