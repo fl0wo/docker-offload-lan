@@ -215,24 +215,31 @@ func TestFindPowerShellWithoutWindowsPath(t *testing.T) {
 	}
 }
 
-func TestEnsureWSLInteropForSystemdServices(t *testing.T) {
-	env := map[string]string{}
-	get := func(k string) string { return env[k] }
-	set := func(k, v string) error { env[k] = v; return nil }
-	glob := func(p string) ([]string, error) {
-		switch p {
-		case "/run/WSL/*_interop":
-			return []string{"/run/WSL/2_interop", "/run/WSL/541_interop"}, nil
-		case "/run/WSL/1_interop", "/run/WSL/2_interop", "/run/WSL/541_interop":
-			return []string{p}, nil
-		}
-		return nil, nil
+func TestWindowsFreeFindsTheWorkingInteropSocket(t *testing.T) {
+	t.Setenv("WSL_INTEROP", "")
+	calls := []string{}
+	w := &WSL2{
+		WindowsMemory: true, PowerShell: "powershell.exe",
+		InteropSockets: func() []string { return []string{"/run/WSL/1_interop", "/run/WSL/2_interop", "/run/WSL/649_interop"} },
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			s := os.Getenv("WSL_INTEROP")
+			calls = append(calls, s)
+			if s == "/run/WSL/649_interop" {
+				return []byte("40482760\r\n"), nil
+			}
+			return []byte(""), nil // init socket after an S4U-task start: no output
+		},
 	}
-	if got := EnsureWSLInterop(get, set, glob); got != "/run/WSL/1_interop" || env["WSL_INTEROP"] != got {
-		t.Fatalf("got %q env %v", got, env)
+	v, err := w.windowsFree(context.Background())
+	if err != nil || v != 40482760*1024 && v != 40482760 {
+		t.Fatalf("v=%d err=%v calls=%v", v, err, calls)
 	}
-	env["WSL_INTEROP"] = "/run/WSL/9_interop"
-	if got := EnsureWSLInterop(get, set, glob); got != "/run/WSL/9_interop" {
-		t.Fatal("an existing WSL_INTEROP must be kept")
+	if calls[0] != "/run/WSL/649_interop" {
+		t.Fatalf("session sockets (higher pid) must be tried first: %v", calls)
+	}
+	w.cachedAt = time.Time{}
+	calls = nil
+	if _, err := w.windowsFree(context.Background()); err != nil || len(calls) != 1 {
+		t.Fatalf("the working socket must be reused first: %v %v", calls, err)
 	}
 }

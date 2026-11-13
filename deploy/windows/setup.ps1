@@ -502,7 +502,12 @@ function Register-KeepAliveTask {
         Write-Step 'would change' "scheduled task '$($script:TaskName)'"; return
     }
     $action = New-ScheduledTaskAction -Execute $exe -Argument $taskArgs
-    $triggers = @((New-ScheduledTaskTrigger -AtStartup), (New-ScheduledTaskTrigger -AtLogOn -User $user))
+    # The repeating trigger revives the distro after `wsl --shutdown`, an update
+    # or a crash: Task Scheduler does not "restart on failure" when wsl.exe
+    # exits non-zero, and IgnoreNew makes the repetition a no-op while it runs
+    # (verified on a real tower: back up ~1 min after `wsl --terminate`).
+    $repeat = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
+    $triggers = @((New-ScheduledTaskTrigger -AtStartup), (New-ScheduledTaskTrigger -AtLogOn -User $user), $repeat)
     # S4U: runs at boot without a stored password and without a logged-on user.
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType S4U -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `

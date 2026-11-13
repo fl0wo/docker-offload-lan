@@ -219,6 +219,18 @@ EOF
 }
 
 # --- 2. base packages ---
+# --- 1b. WSL: no cloud-init on restarts ---
+# cloud-init only provisions a distro's first boot. On every later boot its
+# generator (ds-identify) probes datasources; on the real Windows 10 tower that
+# took 80 s, so after `wsl --shutdown` or an update the node was unreachable for
+# well over a minute. With it disabled: 2 s.
+step_wsl_cloud_init() {
+  if [[ $IS_WSL -ne 1 || ! -d /etc/cloud ]]; then return; fi
+  if [[ -e /etc/cloud/cloud-init.disabled ]]; then report unchanged "WSL: cloud-init disabled on restarts (/etc/cloud/cloud-init.disabled)"; return; fi
+  report "$(changed_or_would)" "WSL: cloud-init disabled on restarts (/etc/cloud/cloud-init.disabled; boot 80 s -> 2 s)"
+  run touch /etc/cloud/cloud-init.disabled
+}
+
 step_packages() {
   local want=(ca-certificates curl jq rsync openssh-server iproute2 util-linux) missing=()
   for p in "${want[@]}"; do pkg_installed "$p" || missing+=("$p"); done
@@ -538,6 +550,7 @@ step_unit() {
 }
 
 step_systemd
+step_wsl_cloud_init
 step_packages
 step_docker
 step_daemon_json

@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -146,8 +148,12 @@ type WSL2 struct {
 	Timeout time.Duration
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
+	// InteropSockets lists candidate WSL interop sockets; nil means
+	// DefaultInteropSockets. Empty result: run without touching WSL_INTEROP.
+	InteropSockets func() []string
 
 	mu       sync.Mutex
+	interop  string // last socket that worked
 	cachedAt time.Time
 	winFree  int64
 	winErr   error
@@ -189,10 +195,39 @@ func (w *WSL2) windowsFree(ctx context.Context) (int64, error) {
 	if ps == "" {
 		ps = FindPowerShell(exec.LookPath, fileExists)
 	}
-	out, err := run(cctx, ps, WindowsFreeMemoryArgs...)
+	// Which interop socket works depends on how the distro was started: when
+	// a scheduled task (S4U logon) started it, the init's socket returns
+	// nothing and only the task session's socket works (real Windows 10
+	// tower). systemd services get no WSL_INTEROP at all. So try the last
+	// working socket first, then every other one, and remember the winner.
+	list := w.InteropSockets
+	if list == nil {
+		list = DefaultInteropSockets
+	}
+	cands := orderInterop(w.interop, os.Getenv("WSL_INTEROP"), list())
+	attempt := func(sock string) (int64, error) {
+		if sock != "" {
+			_ = os.Setenv("WSL_INTEROP", sock)
+		}
+		out, err := run(cctx, ps, WindowsFreeMemoryArgs...)
+		if err != nil {
+			return 0, err
+		}
+		return ParseWindowsFreeKiB(out)
+	}
 	var v int64
-	if err == nil {
-		v, err = ParseWindowsFreeKiB(out)
+	var err error
+	if len(cands) == 0 {
+		v, err = attempt("")
+	}
+	for _, c := range cands {
+		if v, err = attempt(c); err == nil {
+			w.interop = c
+			break
+		}
+		if cctx.Err() != nil {
+			break
+		}
 	}
 	if cctx.Err() != nil && err != nil {
 		err = fmt.Errorf("powershell.exe did not answer within %s", timeout)
@@ -307,9 +342,6 @@ func Detect(procDir string) (wsl bool) {
 func New(c config.CapacityConfig, rootDir RootDirFunc) (Provider, error) {
 	lin := &Linux{RootDir: rootDir}
 	wsl := func() Provider {
-		if c.WindowsMemoryCheck {
-			EnsureWSLInterop(os.Getenv, os.Setenv, filepath.Glob)
-		}
 		return &WSL2{Linux: lin, HostDiskPath: "/mnt/c", WindowsMemory: c.WindowsMemoryCheck}
 	}
 	switch c.Provider {
@@ -359,24 +391,30 @@ func fileExists(p string) bool {
 	return err == nil && !st.IsDir()
 }
 
-// EnsureWSLInterop points WSL_INTEROP at an interop socket when it is unset.
-// WSL sets it only for processes started through wsl.exe; systemd services
-// (dol-node.service) do not get it, and every Windows executable they run
-// fails with "UtilBindVsockAnyPort: socket failed 97" (found on a real
-// Windows 10 tower). /run/WSL/1_interop is the init's socket; any works.
-func EnsureWSLInterop(getenv func(string) string, setenv func(string, string) error, glob func(string) ([]string, error)) string {
-	if v := getenv("WSL_INTEROP"); v != "" {
-		return v
+// DefaultInteropSockets lists /run/WSL/*_interop sockets, session sockets
+// (higher pids, created by wsl.exe launches) before the init's.
+func DefaultInteropSockets() []string {
+	m, _ := filepath.Glob("/run/WSL/*_interop")
+	return m
+}
+
+// orderInterop returns candidates: last working, current env, then session
+// sockets by descending pid, then low-pid (init) sockets; deduplicated.
+func orderInterop(last, env string, found []string) []string {
+	pid := func(p string) int {
+		b := filepath.Base(p)
+		n, _ := strconv.Atoi(strings.TrimSuffix(b, "_interop"))
+		return n
 	}
-	candidates := []string{"/run/WSL/1_interop"}
-	if more, err := glob("/run/WSL/*_interop"); err == nil {
-		candidates = append(candidates, more...)
-	}
-	for _, c := range candidates {
-		if m, err := glob(c); err == nil && len(m) == 1 {
-			_ = setenv("WSL_INTEROP", c)
-			return c
+	rest := append([]string(nil), found...)
+	sort.SliceStable(rest, func(i, j int) bool { return pid(rest[i]) > pid(rest[j]) })
+	var out []string
+	seen := map[string]bool{}
+	for _, c := range append([]string{last, env}, rest...) {
+		if c != "" && !seen[c] {
+			seen[c] = true
+			out = append(out, c)
 		}
 	}
-	return ""
+	return out
 }
