@@ -205,6 +205,11 @@ func (c *StdioConn) Read(p []byte) (int, error) {
 
 func (c *StdioConn) Write(p []byte) (int, error) { return c.stdin.Write(p) }
 
+// CloseWrite half-closes the connection: ssh's stdin is closed, so the remote
+// command (e.g. `docker system dial-stdio`) sees EOF while its output can
+// still be read. Used by the Docker API proxy for hijacked streams.
+func (c *StdioConn) CloseWrite() error { return c.stdin.Close() }
+
 // Close terminates the ssh process.
 //
 // It never blocks: a backgrounded ControlMaster forked by this ssh can

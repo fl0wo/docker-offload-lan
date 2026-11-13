@@ -25,3 +25,5 @@ linters:
         linters: [errcheck, gosec, unused]
       - path: test/integration/
         linters: [gosec]
+      - path: internal/dockerproxy/proxytest/
+        linters: [gosec]

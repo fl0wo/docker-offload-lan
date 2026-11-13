@@ -87,28 +87,36 @@ func within(root, p string) (string, bool) {
 	return rel, true
 }
 
+// MapPath maps the absolute path src under localDir to the same relative
+// path under remoteDir (symlinks such as macOS /tmp → /private/tmp are
+// resolved on both sides). ok is false when src is not under localDir.
+func MapPath(localDir, remoteDir, src string) (mapped string, ok bool) {
+	rel, ok := within(realpath(localDir), realpath(src))
+	if !ok {
+		rel, ok = within(filepath.Clean(localDir), filepath.Clean(src))
+	}
+	if !ok {
+		return "", false
+	}
+	return filepath.ToSlash(filepath.Join(remoteDir, rel)), true
+}
+
 // Rewrite maps every bind-mount source (and file-based secrets/configs) under
 // localDir to remoteDir. Sources outside localDir are an error unless
 // allowExternal, in which case they are left unchanged (they then refer to
 // paths on the node) and reported as warnings.
 func (d Doc) Rewrite(localDir, remoteDir string, allowExternal bool) (warnings []string, err error) {
-	root := realpath(localDir)
 	var outside []string
 	mapPath := func(where, src string) string {
 		if src == "" || !filepath.IsAbs(src) {
 			return src
 		}
-		rel, ok := within(root, realpath(src))
-		if !ok {
-			if rel2, ok2 := within(filepath.Clean(localDir), filepath.Clean(src)); ok2 {
-				rel, ok = rel2, true
-			}
-		}
+		mapped, ok := MapPath(localDir, remoteDir, src)
 		if !ok {
 			outside = append(outside, where+": "+src)
 			return src
 		}
-		return filepath.ToSlash(filepath.Join(remoteDir, rel))
+		return mapped
 	}
 	services := m(d["services"])
 	for _, name := range sortedKeys(services) {
