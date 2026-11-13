@@ -66,7 +66,9 @@ func Open(dir string) (*Store, error) {
 func (s *Store) Dir() string { return s.dir }
 
 // Path joins elems below the state dir.
-func (s *Store) Path(elem ...string) string { return filepath.Join(append([]string{s.dir}, elem...)...) }
+func (s *Store) Path(elem ...string) string {
+	return filepath.Join(append([]string{s.dir}, elem...)...)
+}
 
 // Contains reports whether p is inside the state dir (after cleaning). Used
 // before deleting files whose path came from a state record.

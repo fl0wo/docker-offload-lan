@@ -23,9 +23,9 @@ import (
 type Mode int
 
 const (
-	ModeOK      Mode = iota // normal behavior
-	ModeHang                // block until the client gives up or Unhang
-	ModeError500            // answer every request with 500 internal
+	ModeOK       Mode = iota // normal behavior
+	ModeHang                 // block until the client gives up or Unhang
+	ModeError500             // answer every request with 500 internal
 )
 
 // Fake is an in-memory node. Zero value is not usable; call New.
