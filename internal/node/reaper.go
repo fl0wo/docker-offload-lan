@@ -145,6 +145,9 @@ func (s *Server) reapOrphans(ctx context.Context, rep *ReapReport) {
 			s.log.Warn("managed resource with an invalid lease label; leaving it alone", "lease_label", id)
 			continue
 		}
+		if s.orphanScope != nil && !s.orphanScope(id) {
+			continue
+		}
 		l, err := s.store.Get(ctx, id)
 		switch {
 		case errors.Is(err, ErrNotFound):
@@ -176,7 +179,7 @@ func (s *Server) reapOrphans(ctx context.Context, rep *ReapReport) {
 	}
 	for _, c := range clusters {
 		id, ok := kindx.LeaseOfCluster(c)
-		if !ok {
+		if !ok || (s.orphanScope != nil && !s.orphanScope(id)) {
 			continue
 		}
 		l, err := s.store.Get(ctx, id)

@@ -81,6 +81,11 @@ type Server struct {
 	opsMu sync.Mutex
 	ops   map[string]*sync.Mutex
 
+	// orphanScope, when set, limits orphan cleanup to matching lease ids.
+	// Tests against a shared real Docker daemon use it so they never touch
+	// resources of other processes.
+	orphanScope func(leaseID string) bool
+
 	statMu        sync.Mutex
 	unlabeled     v1.UnlabeledCounts
 	unlabeledAt   time.Time

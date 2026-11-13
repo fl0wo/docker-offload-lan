@@ -12,6 +12,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -70,10 +71,7 @@ func ListenUnix(path string, log *slog.Logger) (net.Listener, error) {
 // the write side at EOF) and the socket to stdout. It returns when the agent
 // closes the connection, or when ctx is cancelled.
 func DialStdio(ctx context.Context, socket string, in io.Reader, out io.Writer) error {
-	var d net.Dialer
-	dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	c, err := d.DialContext(dctx, "unix", socket)
-	cancel()
+	c, err := dialUnixRetry(ctx, socket, 3*time.Second)
 	if err != nil {
 		return fmt.Errorf("cannot connect to node agent at %s: %w\n"+
 			"(hint: is the agent running? `sudo systemctl status dol-node`; is this user in the %q group? `id`)",
@@ -115,6 +113,27 @@ func DialStdio(ctx context.Context, socket string, in io.Reader, out io.Writer) 
 		}
 	case <-ctx.Done():
 		return nil
+	}
+}
+
+// dialUnixRetry connects to socket, retrying for up to patience while the
+// connect is refused (full listen backlog, or the agent restarting). A
+// missing socket fails immediately.
+func dialUnixRetry(ctx context.Context, socket string, patience time.Duration) (net.Conn, error) {
+	deadline := time.Now().Add(patience)
+	var d net.Dialer
+	for {
+		dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		c, err := d.DialContext(dctx, "unix", socket)
+		cancel()
+		if err == nil {
+			return c, nil
+		}
+		retryable := errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EAGAIN)
+		if !retryable || time.Now().After(deadline) || ctx.Err() != nil {
+			return nil, err
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 }
 
