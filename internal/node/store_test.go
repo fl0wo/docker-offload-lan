@@ -58,7 +58,7 @@ func TestStoreSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	if v, _ := s.SchemaVersion(ctx); v != len(migrations) {
 		t.Fatalf("schema version %d", v)
 	}
@@ -167,7 +167,7 @@ func TestSyncDirSymlinkEscape(t *testing.T) {
 
 	// A nested symlink deeper in the tree is refused too.
 	id2 := "l-bbbbbbbbbb"
-	if err := os.MkdirAll(filepath.Join(root, id2), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, id2), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outside, filepath.Join(root, id2, "proj")); err != nil {
@@ -180,7 +180,7 @@ func TestSyncDirSymlinkEscape(t *testing.T) {
 	// A real directory is removed, and the empty lease dir with it.
 	id3 := "l-cccccccccc"
 	p := filepath.Join(root, id3, "proj")
-	if err := os.MkdirAll(filepath.Join(p, "deep"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(p, "deep"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := RemoveSyncDir(root, id3, p); err != nil {

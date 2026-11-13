@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,13 @@ import (
 	v1 "github.com/fl0wo/docker-offload-lan/pkg/api/v1"
 )
 
-func wantCode(t *testing.T, err error, code v1.ErrorCode) *v1.Error {
+func wantCode(t *testing.T, err error, code v1.ErrorCode) {
+	t.Helper()
+	_ = codeErr(t, err, code)
+}
+
+// codeErr asserts err is a *v1.Error with code, a message and a hint.
+func codeErr(t *testing.T, err error, code v1.ErrorCode) *v1.Error {
 	t.Helper()
 	e, ok := v1.AsError(err)
 	if !ok || e.Code != code {
@@ -81,7 +88,7 @@ func TestLeaseLifecycleEndToEnd(t *testing.T) {
 	// growing within capacity succeed.
 	big := 30 * G
 	_, err = c.PatchLease(ctx, l.ID, v1.LeasePatch{EstMemoryBytes: &big})
-	e := wantCode(t, err, v1.CodeInsufficientMemory)
+	e := codeErr(t, err, v1.CodeInsufficientMemory)
 	if !strings.Contains(e.Message, "28.0 GiB schedulable, 30.0 GiB requested") {
 		t.Fatalf("resize must exclude the lease's own reservation: %s", e.Message)
 	}
@@ -110,7 +117,7 @@ func TestLeaseLifecycleEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	syncDir := filepath.Join(n.cfg.SyncRoot, l.ID, "demo")
-	if err := os.MkdirAll(syncDir, 0o755); err != nil {
+	if err := os.MkdirAll(syncDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.RegisterSyncDir(ctx, l.ID, syncDir); err != nil {
@@ -224,7 +231,7 @@ func TestDrainAndRefusalsOverHTTP(t *testing.T) {
 	ctx := context.Background()
 	c := n.client
 	_, err := c.CreateLease(ctx, v1.LeaseRequest{Owner: "a", Session: "s", Workload: v1.WorkloadKind, EstMemoryBytes: 100 * G})
-	e := wantCode(t, err, v1.CodeInsufficientMemory)
+	e := codeErr(t, err, v1.CodeInsufficientMemory)
 	if !strings.Contains(e.Message, "28.0 GiB schedulable, 100.0 GiB requested") || e.Details["requested_bytes"].(float64) != float64(100*G) {
 		t.Fatalf("refusal %+v", e)
 	}
@@ -271,7 +278,7 @@ func TestMaxLeases(t *testing.T) {
 	n.lease(t, 1)
 	n.lease(t, 1)
 	_, err := n.client.CreateLease(context.Background(), v1.LeaseRequest{Owner: "a", Session: "s", Workload: v1.WorkloadKind, EstMemoryBytes: G})
-	e := wantCode(t, err, v1.CodeMaxLeases)
+	e := codeErr(t, err, v1.CodeMaxLeases)
 	if !strings.Contains(e.Message, "2 active leases, the maximum is 2") {
 		t.Fatal(e.Message)
 	}
@@ -315,7 +322,7 @@ func TestNodeClientThroughDialStdio(t *testing.T) {
 	c := nodeclient.New("test", func(ctx context.Context) (net.Conn, error) {
 		a, b := net.Pipe()
 		go func() {
-			_ = DialStdio(context.Background(), n.socket, b, b)
+			_ = DialStdio(ctx, n.socket, b, b)
 			_ = b.Close()
 		}()
 		return a, nil
@@ -348,7 +355,9 @@ func TestDialStdioHalfClose(t *testing.T) {
 	n := newTestNode(t)
 	// The request is followed by EOF on stdin: the bridge half-closes and
 	// still relays the full response before exiting.
-	in := strings.NewReader("GET /v1/healthz HTTP/1.1\r\nHost: node\r\n\r\n")
+	body := `{"owner":"a","session":"s","workload":"build","est_memory_bytes":1073741824}`
+	in := strings.NewReader("POST /v1/leases HTTP/1.1\r\nHost: node\r\nContent-Type: application/json\r\nContent-Length: " +
+		strconv.Itoa(len(body)) + "\r\n\r\n" + body)
 	var out strings.Builder
 	done := make(chan error, 1)
 	go func() { done <- DialStdio(context.Background(), n.socket, in, &out) }()
@@ -360,7 +369,8 @@ func TestDialStdioHalfClose(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("dial-stdio did not exit after the agent closed the connection")
 	}
-	if !strings.HasPrefix(out.String(), "HTTP/1.1 200 OK") || !strings.Contains(out.String(), `"api_version":"v1"`) {
+	// The handler must not see the half-close as a cancellation.
+	if !strings.HasPrefix(out.String(), "HTTP/1.1 201 Created") || !strings.Contains(out.String(), `"state":"active"`) {
 		t.Fatalf("output %q", out.String())
 	}
 }
@@ -402,5 +412,12 @@ func TestListenUnixStaleAndBusy(t *testing.T) {
 	_ = os.WriteFile(f, nil, 0o600)
 	if _, err := ListenUnix(f, nil); err == nil {
 		t.Fatal("regular file replaced")
+	}
+}
+
+func TestListenUnixPathTooLong(t *testing.T) {
+	p := "/" + strings.Repeat("d", 120) + "/n.sock"
+	if _, err := ListenUnix(p, nil); err == nil || !strings.Contains(err.Error(), "unix socket limit") {
+		t.Fatalf("err %v", err)
 	}
 }

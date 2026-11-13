@@ -246,7 +246,14 @@ func (s *Server) logRequests(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		h.ServeHTTP(rec, r)
+		// A client that half-closes its side after sending the request (as
+		// `printf … | dol node dial-stdio` does) makes net/http cancel the
+		// request context. Node operations are short and must not be torn
+		// in half, so handlers run detached with their own deadline; kind
+		// operations set longer ones.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), requestTimeout)
+		defer cancel()
+		h.ServeHTTP(rec, r.WithContext(ctx))
 		lvl := slog.LevelDebug
 		if r.Method != http.MethodGet && r.URL.Path != v1.PathPrefix+"/healthz" {
 			lvl = slog.LevelInfo
@@ -276,7 +283,9 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		err := hs.Shutdown(sctx)
-		<-errc
+		if serr := <-errc; err == nil && !errors.Is(serr, http.ErrServerClosed) {
+			err = serr
+		}
 		return err
 	case err := <-errc:
 		if errors.Is(err, http.ErrServerClosed) {
@@ -303,6 +312,9 @@ func writeErr(w http.ResponseWriter, err error) {
 }
 
 const maxBody = 1 << 20
+
+// requestTimeout bounds every request except kind operations and release.
+const requestTimeout = 2 * time.Minute
 
 func decode(r *http.Request, v any) error {
 	b, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
@@ -819,16 +831,6 @@ func contains(xs []string, x string) bool {
 		}
 	}
 	return false
-}
-
-func remove(xs []string, x string) []string {
-	out := xs[:0:0]
-	for _, v := range xs {
-		if v != x {
-			out = append(out, v)
-		}
-	}
-	return out
 }
 
 // errText renders an error for last_error without newlines.

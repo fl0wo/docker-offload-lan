@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
 	"time"
@@ -27,8 +28,12 @@ func ListenUnix(path string, log *slog.Logger) (net.Listener, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
+	if max := maxSocketPath(); len(path) > max {
+		return nil, fmt.Errorf("socket path %s is %d bytes, longer than the %d-byte unix socket limit of %s; choose a shorter `socket` in node.yaml",
+			path, len(path), max, runtime.GOOS)
+	}
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // the socket itself is 0660; the directory must be traversable
 		return nil, fmt.Errorf("creating socket directory %s: %w (run as root or change `socket` in node.yaml)", dir, err)
 	}
 	if fi, err := os.Lstat(path); err == nil {
@@ -51,7 +56,7 @@ func ListenUnix(path string, log *slog.Logger) (net.Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listening on %s: %w", path, err)
 	}
-	if err := os.Chmod(path, 0o660); err != nil {
+	if err := os.Chmod(path, 0o660); err != nil { //nolint:gosec // brief §7.11: socket mode 0660, group dol
 		_ = ln.Close()
 		return nil, fmt.Errorf("chmod 0660 %s: %w", path, err)
 	}
@@ -66,6 +71,14 @@ func ListenUnix(path string, log *slog.Logger) (net.Listener, error) {
 	return ln, nil
 }
 
+// maxSocketPath is sizeof(sun_path)-1: 107 on Linux, 103 on BSDs/macOS.
+func maxSocketPath() int {
+	if runtime.GOOS == "linux" {
+		return 107
+	}
+	return 103
+}
+
 // DialStdio bridges in/out to the node agent socket, like
 // `docker system dial-stdio`: stdin is copied to the socket (half-closing
 // the write side at EOF) and the socket to stdout. It returns when the agent
@@ -78,7 +91,7 @@ func DialStdio(ctx context.Context, socket string, in io.Reader, out io.Writer) 
 			socket, unwrapOp(err), SocketGroup)
 	}
 	uc := c.(*net.UnixConn)
-	defer uc.Close()
+	defer func() { _ = uc.Close() }()
 
 	stdinDone := make(chan error, 1)
 	connDone := make(chan error, 1)

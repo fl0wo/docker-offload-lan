@@ -185,7 +185,8 @@ func (s *Store) Update(ctx context.Context, l *v1.Lease) error {
 	for _, c := range cols[1:] {
 		set = append(set, strings.TrimSpace(c)+" = ?")
 	}
-	q := `UPDATE leases SET ` + strings.Join(set, ", ") + `, updated_at = ? WHERE id = ?`
+	// Built from the constant column list; values are bound parameters.
+	q := `UPDATE leases SET ` + strings.Join(set, ", ") + `, updated_at = ? WHERE id = ?` //nolint:gosec // constant columns
 	r, err := s.db.ExecContext(ctx, q, append(append(args[1:], time.Now().UnixNano()), l.ID)...)
 	if err != nil {
 		return err
@@ -250,17 +251,17 @@ func (s *Store) List(ctx context.Context, owner string, states ...v1.LeaseState)
 		args = append(args, owner)
 	}
 	if len(states) > 0 {
-		q += ` AND state IN (?` + strings.Repeat(",?", len(states)-1) + `)`
+		q += ` AND state IN (?` + strings.Repeat(",?", len(states)-1) + `)` //nolint:gosec // placeholders only
 		for _, st := range states {
 			args = append(args, string(st))
 		}
 	}
 	q += ` ORDER BY created_at, id`
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := s.db.QueryContext(ctx, q, args...) //nolint:gosec // q contains placeholders only
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []v1.Lease{}
 	for rows.Next() {
 		l, err := scanLease(rows)
@@ -287,7 +288,7 @@ func (s *Store) UsedPorts(ctx context.Context) (map[int]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	used := map[int]bool{}
 	for rows.Next() {
 		var p int

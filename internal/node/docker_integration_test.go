@@ -47,7 +47,7 @@ func TestRealDockerTeardown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	clock := newClock()
 	orphanID := v1.NewLeaseID()
 	srv, err := New(ctx, Options{Config: cfg, Store: st, Provider: capacity.FakeFromConfig(cfg.Capacity.Fake),
@@ -62,7 +62,12 @@ func TestRealDockerTeardown(t *testing.T) {
 	sctx, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(sctx, ln) }()
-	defer func() { stop(); <-done }()
+	defer func() {
+		stop()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
 	c := nodeclient.NewUnix("test", cfg.Socket)
 	defer c.Close()
 
@@ -107,7 +112,7 @@ func TestRealDockerTeardown(t *testing.T) {
 	created["container"] = append(created["container"], app, tag+"-orphan", tag+"-unlabeled")
 	docker(append(append([]string{"network", "create"}, labelArgs(l.Labels)...), net)...)
 	docker(append(append([]string{"volume", "create"}, labelArgs(l.Labels)...), vol)...)
-	docker(append(append(append([]string{"run", "-d", "--name", app, "--network", net, "-v", vol + ":/data"}, labelArgs(l.Labels)...)), sleeper...)...)
+	docker(append(append([]string{"run", "-d", "--name", app, "--network", net, "-v", vol + ":/data"}, labelArgs(l.Labels)...), sleeper...)...)
 
 	// An orphan: labeled with a lease the node has never seen.
 	orphan := v1.LeaseLabels(orphanID, "dol-test", "s-gone", "itest")

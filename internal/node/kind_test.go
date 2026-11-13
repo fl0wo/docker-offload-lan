@@ -120,7 +120,7 @@ func TestKindErrors(t *testing.T) {
 	// kind failure: 500 kind_failed, rolled back.
 	n.kind.fail["create"] = errors.New("ERROR: failed to create cluster: node(s) already exist")
 	_, err = c.KindCreate(ctx, l.ID, v1.KindCreateRequest{Name: "x"})
-	e := wantCode(t, err, v1.CodeKindFailed)
+	e := codeErr(t, err, v1.CodeKindFailed)
 	if !strings.Contains(e.Message, "already exist") {
 		t.Fatal(e.Message)
 	}
@@ -131,7 +131,7 @@ func TestKindErrors(t *testing.T) {
 	// kind missing: hint says how to install it.
 	n.kind.fail["create"] = &exec.Error{Name: "kind", Err: exec.ErrNotFound}
 	_, err = c.KindCreate(ctx, l.ID, v1.KindCreateRequest{Name: "x"})
-	if e := wantCode(t, err, v1.CodeKindFailed); !strings.Contains(e.Hint, "install.sh") {
+	if e := codeErr(t, err, v1.CodeKindFailed); !strings.Contains(e.Hint, "install.sh") {
 		t.Fatal(e.Hint)
 	}
 	delete(n.kind.fail, "create")
@@ -141,14 +141,14 @@ func TestKindErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = c.KindCreate(ctx, l.ID, v1.KindCreateRequest{Name: "b"})
-	if e := wantCode(t, err, v1.CodeConflict); !strings.Contains(e.Hint, "port_range") {
+	if e := codeErr(t, err, v1.CodeConflict); !strings.Contains(e.Hint, "port_range") {
 		t.Fatal(e.Hint)
 	}
 
 	// Image missing on the node.
 	n.kind.fail["load"] = errors.New(`ERROR: image: "app:dev" not present locally`)
 	_, err = c.KindLoad(ctx, l.ID, "a", []string{"app:dev"})
-	if e := wantCode(t, err, v1.CodeKindFailed); !strings.Contains(e.Hint, "build the image on the node") {
+	if e := codeErr(t, err, v1.CodeKindFailed); !strings.Contains(e.Hint, "build the image on the node") {
 		t.Fatal(e.Hint)
 	}
 }

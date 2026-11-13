@@ -158,7 +158,7 @@ func TestConcurrentCreateNeverOvercommits(t *testing.T) {
 
 	t.Run("mixed sizes", func(t *testing.T) {
 		n := concurrencyNode(t, 100000)
-		rng := rand.New(rand.NewPCG(42, 7))
+		rng := rand.New(rand.NewPCG(42, 7)) //nolint:gosec // deterministic test sizes
 		sizes := make([]int64, 1200)
 		for i := range sizes {
 			sizes[i] = 16*MiB + rng.Int64N(240*MiB)
