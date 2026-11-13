@@ -11,68 +11,17 @@ import (
 	"time"
 
 	"github.com/fl0wo/docker-offload-lan/internal/sshx"
+	"github.com/fl0wo/docker-offload-lan/internal/testutil/fakessh"
 )
 
-// TestMain lets the test binary act as a fake `ssh` that implements -L by
-// proxying locally and exits when stdin closes, like the real thing with
-// `cat >/dev/null` as remote command.
 func TestMain(m *testing.M) {
-	if os.Getenv("FAKE_SSH") == "1" {
-		fakeSSH()
-		return
-	}
+	fakessh.Main()
 	os.Exit(m.Run())
-}
-
-func fakeSSH() {
-	var spec string
-	for i, a := range os.Args {
-		if a == "-L" {
-			spec = os.Args[i+1]
-		}
-	}
-	if os.Getenv("FAKE_SSH_FAIL") != "" {
-		fmt.Fprintln(os.Stderr, "ssh: connect to host x port 2222: Connection refused")
-		os.Exit(255)
-	}
-	// 127.0.0.1:LPORT:RHOST:RPORT
-	p := strings.Split(spec, ":")
-	l, err := net.Listen("tcp", p[0]+":"+p[1])
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "bind:", err)
-		os.Exit(255)
-	}
-	go func() {
-		for {
-			c, err := l.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				r, err := net.Dial("tcp", p[2]+":"+p[3])
-				if err != nil {
-					c.Close()
-					return
-				}
-				go io.Copy(r, c)
-				io.Copy(c, r)
-				c.Close()
-				r.Close()
-			}()
-		}
-	}()
-	io.Copy(io.Discard, os.Stdin) // exit when parent goes away
 }
 
 func newMgr(t *testing.T) *Manager {
 	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	wrapper := t.TempDir() + "/ssh"
-	os.WriteFile(wrapper, []byte("#!/bin/sh\nFAKE_SSH=1 exec "+exe+" \"$@\"\n"), 0o755)
-	return &Manager{SSH: sshx.Options{Binary: wrapper}, fws: map[int]*Forward{}}
+	return NewManager(sshx.Options{Binary: fakessh.Binary(t)})
 }
 
 func echoServer(t *testing.T) int {
@@ -150,7 +99,7 @@ func TestBusyPortPicksAnother(t *testing.T) {
 
 func TestSSHFailureIsActionable(t *testing.T) {
 	m := newMgr(t)
-	t.Setenv("FAKE_SSH_FAIL", "1")
+	t.Setenv("DOL_FAKE_SSH_FAIL", "1")
 	_, _, err := m.Open(context.Background(), Spec{SSHHost: "n", RemotePort: 80})
 	if err == nil || !strings.Contains(err.Error(), "Connection refused") || !strings.Contains(err.Error(), "sshd") {
 		t.Fatalf("want actionable error, got %v", err)

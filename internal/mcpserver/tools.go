@@ -40,7 +40,24 @@ const (
 		"volumes=true also deletes its volumes. Refuses anything that does not carry this lease's labels."
 	descResize = "Change a lease's memory estimate when the workload grows or shrinks (e.g. adding services). Pass lease_id and the new total est_memory_gb. " +
 		"A remote node re-runs admission and may refuse; then keep the current size or release and re-acquire."
-	descPin = "Keep a lease alive after this session ends (pinned=true), e.g. when the user asks to leave a stack running; pinned=false makes it session-bound again. " +
+	descForward = "Make a service on the lease's node reachable at localhost on this machine via an SSH tunnel. Pass lease_id and remote_port " +
+		"(the port published on the node, e.g. 8080 for -p 127.0.0.1:8080:80); optional local_port. Returns the actual local port (another one if busy). " +
+		"Not needed for local leases."
+	descUnforward = "Close a tunnel opened by dol_forward. Pass lease_id and the local_port it returned. dol_release closes all tunnels of a lease automatically."
+	descSync      = "Copy a project directory to the lease's node (rsync, honors .gitignore, skips .git) so it can be bind-mounted there. " +
+		"Pass lease_id and optionally path (default: project dir). Returns remote_path to use in -v remote_path:/target. Call again after edits. Not needed for local leases."
+	descComposeUp = "Start a docker compose project on the lease's host. Prefer this over raw `compose up`: it syncs the project to the node, " +
+		"rewrites bind mounts, adds lease labels to every service, network and volume, then runs up -d. Pass lease_id and optionally files, project_name, extra_args. " +
+		"Returns published ports to dol_forward."
+	descComposeDown = "Stop and remove a compose project started with dol_compose_up on the lease's host. Pass lease_id and project_name; volumes=true also removes its volumes. " +
+		"dol_release does this automatically for every project of the lease."
+	descKindCreate = "Create a kind Kubernetes cluster for the lease (remote node, or local fallback). Pass lease_id and a short name like e2e; " +
+		"optional config_yaml for nodes/extraPortMappings. Waits until ready (1-3 min) and returns commands.kubectl (`kubectl --kubeconfig …`) " +
+		"to use in every kubectl command. The API server is reached through an SSH tunnel automatically."
+	descKindLoad = "Load images into a kind cluster of the lease. Build them first with the lease's docker prefix (so they exist where the cluster runs), " +
+		"then pass lease_id, cluster (short name) and images (tags). Never docker save/load across machines."
+	descKindDelete = "Delete a kind cluster of the lease (and its tunnel and kubeconfig). Pass lease_id and cluster. dol_release also deletes all clusters of a lease."
+	descPin        = "Keep a lease alive after this session ends (pinned=true), e.g. when the user asks to leave a stack running; pinned=false makes it session-bound again. " +
 		"Pass lease_id, pinned and optionally ttl_minutes as a hard expiry. Use only when the user asks."
 )
 
@@ -127,7 +144,82 @@ func NewServer(core *Core) *mcp.Server {
 			}
 			return r, summarizeAction(r), nil
 		}))
+
+	open := &mcp.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(true)}
+	mcp.AddTool(s, &mcp.Tool{Name: "dol_forward", Description: descForward, Annotations: open},
+		handler("dol_forward", func(ctx context.Context, in ForwardInput) (*ForwardResult, string, error) {
+			r, err := core.Forward(ctx, in)
+			if err != nil {
+				return nil, "", err
+			}
+			return r, lines(fmt.Sprintf("Forwarding localhost:%d → %s (lease %s).", r.LocalPort, r.Node+" port", r.LeaseID), warnLine(r.Warnings)), nil
+		}))
+	mcp.AddTool(s, &mcp.Tool{Name: "dol_unforward", Description: descUnforward},
+		handler("dol_unforward", func(ctx context.Context, in UnforwardInput) (*v1.ActionResult, string, error) {
+			r, err := core.Unforward(ctx, in)
+			if err != nil {
+				return nil, "", err
+			}
+			return r, summarizeAction(r), nil
+		}))
+	mcp.AddTool(s, &mcp.Tool{Name: "dol_sync", Description: descSync, Annotations: open},
+		handler("dol_sync", func(ctx context.Context, in SyncInput) (*SyncResult, string, error) {
+			r, err := core.Sync(ctx, in)
+			if err != nil {
+				return nil, "", err
+			}
+			return r, lines(fmt.Sprintf("Synced %s → %s (lease %s).", r.LocalPath, r.RemotePath, r.LeaseID), warnLine(r.Warnings)), nil
+		}))
+	mcp.AddTool(s, &mcp.Tool{Name: "dol_compose_up", Description: descComposeUp, Annotations: open},
+		handler("dol_compose_up", func(ctx context.Context, in ComposeUpInput) (*ComposeUpResult, string, error) {
+			r, err := core.ComposeUp(ctx, in)
+			if err != nil {
+				return nil, "", err
+			}
+			return r, lines(fmt.Sprintf("Compose project %s is up %s (lease %s); %d published port(s).", r.Project, where(r.PlacementInfo), r.LeaseID, len(r.Ports)),
+				fmt.Sprintf("Use `%s -p %s …` for ps/logs.", r.Commands.Compose, r.Project), warnLine(r.Warnings)), nil
+		}))
+	mcp.AddTool(s, &mcp.Tool{Name: "dol_compose_down", Description: descComposeDown, Annotations: destructive},
+		handler("dol_compose_down", func(ctx context.Context, in ComposeDownInput) (*v1.ActionResult, string, error) {
+			r, err := core.ComposeDown(ctx, in)
+			if err != nil {
+				return nil, "", err
+			}
+			return r, summarizeAction(r), nil
+		}))
+	mcp.AddTool(s, &mcp.Tool{Name: "dol_kind_create", Description: descKindCreate, Annotations: open},
+		handler("dol_kind_create", func(ctx context.Context, in KindCreateInput) (*KindCreateResult, string, error) {
+			r, err := core.KindCreate(ctx, in)
+			if err != nil {
+				return nil, "", err
+			}
+			return r, lines(fmt.Sprintf("kind cluster %s is ready %s (lease %s).", r.Cluster, where(r.PlacementInfo), r.LeaseID),
+				fmt.Sprintf("Use `%s …` for every kubectl command.", r.Commands.Kubectl), warnLine(r.Warnings)), nil
+		}))
+	mcp.AddTool(s, &mcp.Tool{Name: "dol_kind_load", Description: descKindLoad, Annotations: open},
+		handler("dol_kind_load", func(ctx context.Context, in KindLoadInput) (*v1.ActionResult, string, error) {
+			r, err := core.KindLoad(ctx, in)
+			if err != nil {
+				return nil, "", err
+			}
+			return r, summarizeAction(r), nil
+		}))
+	mcp.AddTool(s, &mcp.Tool{Name: "dol_kind_delete", Description: descKindDelete, Annotations: destructive},
+		handler("dol_kind_delete", func(ctx context.Context, in KindDeleteInput) (*v1.ActionResult, string, error) {
+			r, err := core.KindDelete(ctx, in)
+			if err != nil {
+				return nil, "", err
+			}
+			return r, summarizeAction(r), nil
+		}))
 	return s
+}
+
+func where(p v1.PlacementInfo) string {
+	if p.Placement == v1.PlacementRemote {
+		return "on node " + p.Node
+	}
+	return "locally"
 }
 
 func ptr[T any](v T) *T { return &v }

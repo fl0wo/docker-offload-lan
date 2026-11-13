@@ -32,6 +32,12 @@ type hopt func(*config.ClientConfig)
 
 func newHarness(t *testing.T, freeGB float64, opts ...hopt) *harness {
 	t.Helper()
+	return newHarnessWith(t, freeGB, nil, opts...)
+}
+
+// newHarnessWith lets a test adjust core Options (ssh binary, tunnels, …).
+func newHarnessWith(t *testing.T, freeGB float64, mod func(*Options), opts ...hopt) *harness {
+	t.Helper()
 	cfg := config.DefaultClient()
 	cfg.Identity.Owner = "alice@mac"
 	cfg.Nodes = []config.NodeRef{{Name: "tower", SSHHost: "tower", DockerContext: "dol-tower", Priority: 100}}
@@ -47,10 +53,14 @@ func newHarness(t *testing.T, freeGB float64, opts ...hopt) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.core, err = NewCore(context.Background(), Options{
+	o := Options{
 		Config: cfg, Store: h.store, Docker: h.docker, ProjectDir: "/work/payments-api", ClientArch: "arm64",
 		NodeAPI: func(n config.NodeRef) NodeAPI { return h.node.Client() },
-	})
+	}
+	if mod != nil {
+		mod(&o)
+	}
+	h.core, err = NewCore(context.Background(), o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +159,9 @@ func TestToolsAreDescribedForAgents(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]bool{"dol_status": true, "dol_acquire": true, "dol_release": true, "dol_list": true,
-		"dol_stop": true, "dol_remove": true, "dol_resize": true, "dol_pin": true}
+		"dol_stop": true, "dol_remove": true, "dol_resize": true, "dol_pin": true,
+		"dol_forward": true, "dol_unforward": true, "dol_sync": true, "dol_compose_up": true, "dol_compose_down": true,
+		"dol_kind_create": true, "dol_kind_load": true, "dol_kind_delete": true}
 	for _, tool := range res.Tools {
 		if !want[tool.Name] {
 			t.Errorf("unexpected tool %s", tool.Name)

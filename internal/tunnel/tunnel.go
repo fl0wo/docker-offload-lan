@@ -3,15 +3,17 @@
 //
 // Each forward is its own ssh connection (`-S none`, never multiplexed
 // through a ControlMaster, whose forwards would outlive us). The remote side
-// runs `cat >/dev/null` fed from a pipe we hold: if dol dies for any reason,
+// prints a ready marker, then runs `cat >/dev/null` fed from a pipe we hold: if dol dies for any reason,
 // even SIGKILL, the pipe closes, the remote cat exits and ssh exits. No
 // orphaned tunnels.
 package tunnel
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os/exec"
 	"sort"
@@ -124,8 +126,12 @@ func (m *Manager) Open(ctx context.Context, s Spec) (*Forward, string, error) {
 	opts := m.SSH
 	opts.ExtraArgs = append(append([]string{}, opts.ExtraArgs...),
 		"-S", "none", "-o", "ExitOnForwardFailure=yes", "-L", spec)
-	cmd := exec.Command(binOr(opts.Binary), opts.Args(s.SSHHost, "cat >/dev/null")...)
+	cmd := exec.Command(binOr(opts.Binary), opts.Args(s.SSHHost, remoteCmd)...)
 	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, "", err
+	}
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, "", err
 	}
@@ -139,9 +145,23 @@ func (m *Manager) Open(ctx context.Context, s Spec) (*Forward, string, error) {
 			RemotePort: s.RemotePort, Purpose: s.Purpose, PID: cmd.Process.Pid},
 		cmd: cmd, stdin: stdin, done: make(chan struct{}),
 	}
+	ready := make(chan struct{})
+	go func() {
+		// The remote prints the marker once the session channel is open;
+		// ssh binds -L listeners before opening the session, and with
+		// ExitOnForwardFailure it would have exited on a bind failure.
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			if strings.TrimSpace(sc.Text()) == readyMarker {
+				close(ready)
+				break
+			}
+		}
+		_, _ = io.Copy(io.Discard, stdout)
+	}()
 	go func() { f.err = cmd.Wait(); close(f.done) }()
 
-	if err := m.waitReady(ctx, f); err != nil {
+	if err := m.waitReady(ctx, f, ready); err != nil {
 		f.kill()
 		se := strings.TrimSpace(stderr.String())
 		msg := fmt.Sprintf("forward 127.0.0.1:%d → %s:%d via %s failed: %v", s.LocalPort, s.RemoteHost, s.RemotePort, s.SSHHost, err)
@@ -175,45 +195,37 @@ func binOr(b string) string {
 	return b
 }
 
-// waitReady polls until the local port accepts a TCP connection or ssh exits.
-// ssh binds the local listener only after authentication and after
-// ExitOnForwardFailure checks, so an accepted connection means the tunnel is
-// up (the remote end may still refuse if nothing listens there).
-func (m *Manager) waitReady(ctx context.Context, f *Forward) error {
+const readyMarker = "dol-tunnel-ready"
+
+// remoteCmd announces readiness, then blocks on stdin: when dol dies the
+// pipe closes, cat exits and so does ssh.
+const remoteCmd = "echo " + readyMarker + "; exec cat >/dev/null"
+
+// waitReady waits for the ready marker, ssh exit, or timeout.
+func (m *Manager) waitReady(ctx context.Context, f *Forward, ready <-chan struct{}) error {
 	to := m.ReadyTimeout
 	if to == 0 {
-		to = 10 * time.Second
+		to = 15 * time.Second
 	}
 	deadline := time.NewTimer(to)
 	defer deadline.Stop()
-	tick := time.NewTicker(50 * time.Millisecond)
-	defer tick.Stop()
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(f.LocalPort))
-	for {
+	select {
+	case <-ready:
 		select {
 		case <-f.done:
-			if f.err != nil {
-				return f.err
-			}
 			return errors.New("ssh exited")
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			return fmt.Errorf("not ready after %s", to)
-		case <-tick.C:
-			c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
-			if err == nil {
-				_ = c.Close()
-				// Make sure the listener belongs to our ssh (not a race with
-				// another process): ssh must still be alive.
-				select {
-				case <-f.done:
-					return errors.New("ssh exited")
-				default:
-					return nil
-				}
-			}
+		default:
+			return nil
 		}
+	case <-f.done:
+		if f.err != nil {
+			return f.err
+		}
+		return errors.New("ssh exited")
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-deadline.C:
+		return fmt.Errorf("not ready after %s", to)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -164,6 +165,10 @@ func (f *Fake) mux() *http.ServeMux {
 	h("DELETE /v1/leases/{id}", f.releaseLease)
 	h("GET /v1/leases/{id}/resources", f.resources)
 	h("POST /v1/leases/{id}/compose/{project}", f.registerCompose)
+	h("POST /v1/leases/{id}/sync", f.registerSync)
+	h("POST /v1/leases/{id}/kind", f.kindCreate)
+	h("POST /v1/leases/{id}/kind/{name}/load", f.kindLoad)
+	h("DELETE /v1/leases/{id}/kind/{name}", f.kindDelete)
 	return m
 }
 
@@ -328,6 +333,115 @@ func (f *Fake) registerCompose(w http.ResponseWriter, r *http.Request) {
 		l.Resources.ComposeProjects = append(l.Resources.ComposeProjects, r.PathValue("project"))
 		writeJSON(w, 200, map[string]string{})
 	}
+}
+
+func (f *Fake) registerSync(w http.ResponseWriter, r *http.Request) {
+	var req v1.SyncRegisterRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if l := f.lookupLocked(w, r, false); l != nil {
+		l.Resources.SyncDirs = append(l.Resources.SyncDirs, req.Path)
+		writeJSON(w, 200, map[string]string{})
+	}
+}
+
+// KindAPIPort is the API server port the fake reports for new clusters; tests
+// may point it at a local listener to emulate the node's API server.
+var KindAPIPort = 16443
+
+// FakeKubeconfig is what the fake returns for kind clusters.
+const FakeKubeconfig = `apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: Zm9v
+    server: https://127.0.0.1:%d
+  name: kind-%s
+contexts:
+- context:
+    cluster: kind-%s
+    user: kind-%s
+  name: kind-%s
+current-context: kind-%s
+kind: Config
+users:
+- name: kind-%s
+  user:
+    client-certificate-data: YmFy
+`
+
+func (f *Fake) kindCreate(w http.ResponseWriter, r *http.Request) {
+	var req v1.KindCreateRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := v1.ValidateKindName(req.Name); err != nil {
+		e, _ := v1.AsError(err)
+		writeErr(w, e)
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	l := f.lookupLocked(w, r, false)
+	if l == nil {
+		return
+	}
+	cn := v1.KindClusterName(l.ID, req.Name)
+	mode := req.AccessMode
+	if mode == "" {
+		mode = v1.AccessTunnel
+	}
+	port := KindAPIPort
+	l.Resources.KindClusters = append(l.Resources.KindClusters, v1.KindCluster{Name: req.Name, ClusterName: cn, APIServerPort: port, AccessMode: mode})
+	host := "127.0.0.1"
+	if mode == v1.AccessLAN {
+		host = "192.0.2.10"
+	}
+	kc := fmt.Sprintf(FakeKubeconfig, port, cn, cn, cn, cn, cn, cn)
+	if mode == v1.AccessLAN {
+		kc = fmt.Sprintf(strings.Replace(FakeKubeconfig, "127.0.0.1", "0.0.0.0", 1), port, cn, cn, cn, cn, cn, cn)
+	}
+	writeJSON(w, 201, v1.KindCreateResponse{Cluster: cn, Kubeconfig: kc, APIServer: v1.HostPort{Host: host, Port: port}, AccessMode: mode,
+		PortMappings: []v1.PortMapping{{ContainerPort: 30080, HostPort: 8080, ListenAddress: "127.0.0.1"}}})
+}
+
+func (f *Fake) findCluster(l *v1.Lease, name string) int {
+	for i, c := range l.Resources.KindClusters {
+		if c.Name == name || c.ClusterName == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func (f *Fake) kindLoad(w http.ResponseWriter, r *http.Request) {
+	var req v1.KindLoadRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	l := f.lookupLocked(w, r, false)
+	if l == nil {
+		return
+	}
+	if f.findCluster(l, r.PathValue("name")) < 0 {
+		writeErr(w, v1.Errorf(v1.CodeNotFound, "create it first", "no kind cluster %q on lease %s", r.PathValue("name"), l.ID))
+		return
+	}
+	writeJSON(w, 200, v1.KindLoadResponse{Loaded: req.Images})
+}
+
+func (f *Fake) kindDelete(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	l := f.lookupLocked(w, r, false)
+	if l == nil {
+		return
+	}
+	i := f.findCluster(l, r.PathValue("name"))
+	if i < 0 {
+		writeErr(w, v1.Errorf(v1.CodeNotFound, "list clusters with dol_list", "no kind cluster %q on lease %s", r.PathValue("name"), l.ID))
+		return
+	}
+	l.Resources.KindClusters = append(l.Resources.KindClusters[:i], l.Resources.KindClusters[i+1:]...)
+	writeJSON(w, 200, map[string]string{})
 }
 
 // Server is a Fake served on a unix socket.

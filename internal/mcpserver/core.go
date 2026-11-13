@@ -24,6 +24,7 @@ import (
 	"github.com/fl0wo/docker-offload-lan/internal/placement"
 	"github.com/fl0wo/docker-offload-lan/internal/sshx"
 	"github.com/fl0wo/docker-offload-lan/internal/state"
+	"github.com/fl0wo/docker-offload-lan/internal/tunnel"
 	"github.com/fl0wo/docker-offload-lan/internal/version"
 	v1 "github.com/fl0wo/docker-offload-lan/pkg/api/v1"
 )
@@ -48,12 +49,6 @@ type Forwarder interface {
 	CloseAll()
 }
 
-// noForwards is the M3 default: there are no tunnels yet.
-type noForwards struct{}
-
-func (noForwards) CloseLease(context.Context, v1.ClientLease) ([]int, error) { return nil, nil }
-func (noForwards) CloseAll()                                                 {}
-
 // Options configure a Core. Zero values pick production defaults.
 type Options struct {
 	Config *config.ClientConfig
@@ -70,26 +65,40 @@ type Options struct {
 	LocalContext string
 	ClientArch   string // default runtime.GOARCH
 	Forwarder    Forwarder
-	Logger       *slog.Logger
-	Now          func() time.Time
+	// SSH configures every ssh invocation (node API, tunnels, rsync). Its
+	// ConnectTimeout defaults to policy.health_timeout_ms.
+	SSH sshx.Options
+	// Tunnels manages ssh -L forwards; default tunnel.NewManager(SSH).
+	Tunnels *tunnel.Manager
+	// KindBinary is the local kind binary for local kind fallback; default "kind".
+	KindBinary string
+	// Rsync overrides rsync binary detection.
+	Rsync  string
+	Logger *slog.Logger
+	Now    func() time.Time
 }
 
 // Core is the client logic behind every MCP tool and CLI command.
 type Core struct {
-	cfg       *config.ClientConfig
-	store     *state.Store
-	runner    dockerx.Runner
-	nodes     map[string]nodeEntry
-	placer    *placement.Placer
-	session   string
-	owner     string
-	project   string
-	localCtx  string
-	localWarn string
-	arch      string
-	fwd       Forwarder
-	log       *slog.Logger
-	now       func() time.Time
+	cfg        *config.ClientConfig
+	store      *state.Store
+	runner     dockerx.Runner
+	nodes      map[string]nodeEntry
+	placer     *placement.Placer
+	session    string
+	owner      string
+	project    string
+	projectDir string
+	ssh        sshx.Options
+	tunnels    *tunnel.Manager
+	kindBin    string
+	rsync      string
+	localCtx   string
+	localWarn  string
+	arch       string
+	fwd        Forwarder
+	log        *slog.Logger
+	now        func() time.Time
 
 	mu      sync.Mutex
 	ensured map[string]bool // docker contexts verified this process
@@ -125,8 +134,17 @@ func NewCore(ctx context.Context, o Options) (*Core, error) {
 	if c.owner == "" {
 		c.owner = config.DefaultOwner()
 	}
+	c.ssh = o.SSH
+	if c.ssh.ConnectTimeout == 0 {
+		c.ssh.ConnectTimeout = time.Duration(c.cfg.Policy.HealthTimeoutMS) * time.Millisecond
+	}
+	c.tunnels = o.Tunnels
+	if c.tunnels == nil {
+		c.tunnels = tunnel.NewManager(c.ssh)
+	}
+	c.kindBin, c.rsync = o.KindBinary, o.Rsync
 	if c.fwd == nil {
-		c.fwd = noForwards{}
+		c.fwd = tunnelForwarder{c.tunnels}
 	}
 	if c.log == nil {
 		c.log = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -138,6 +156,7 @@ func NewCore(ctx context.Context, o Options) (*Core, error) {
 	if dir == "" {
 		dir = ProjectDir()
 	}
+	c.projectDir = dir
 	c.project = ProjectName(dir)
 
 	c.localCtx = cmp.Or(o.LocalContext, c.cfg.Local.DockerContext)
@@ -156,9 +175,9 @@ func NewCore(ctx context.Context, o Options) (*Core, error) {
 
 	newAPI := o.NodeAPI
 	if newAPI == nil {
-		hto := time.Duration(c.cfg.Policy.HealthTimeoutMS) * time.Millisecond
+		opts := c.ssh
 		newAPI = func(n config.NodeRef) NodeAPI {
-			return nodeclient.NewSSH(n.Name, n.SSHHost, sshx.Options{ConnectTimeout: hto})
+			return nodeclient.NewSSH(n.Name, n.SSHHost, opts)
 		}
 	}
 	pol := c.cfg.Policy
@@ -596,8 +615,15 @@ func (c *Core) teardownLocal(ctx context.Context, l v1.ClientLease) v1.Inventory
 	tctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	d := c.docker(l.DockerContext)
-	var compose []string
+	var compose, kinds []string
 	var errs []string
+	for _, k := range l.Resources.KindClusters {
+		if _, err := c.kindCmd(tctx, l.DockerContext, "delete", "cluster", "--name", k.ClusterName); err != nil {
+			errs = append(errs, fmt.Sprintf("kind cluster %s: %v", k.ClusterName, err))
+			continue
+		}
+		kinds = append(kinds, k.ClusterName)
+	}
 	for _, p := range l.Resources.ComposeProjects {
 		if _, err := d.ComposeProject(tctx, p, "down", "--volumes", "--remove-orphans", "--timeout", "10"); err != nil {
 			errs = append(errs, fmt.Sprintf("compose project %s: %v", p, err))
@@ -607,6 +633,7 @@ func (c *Core) teardownLocal(ctx context.Context, l v1.ClientLease) v1.Inventory
 	}
 	inv := d.TeardownLease(tctx, l.ID)
 	inv.ComposeProjects = compose
+	inv.KindClusters = kinds
 	inv.Errors = append(errs, inv.Errors...)
 	return inv
 }

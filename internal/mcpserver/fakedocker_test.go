@@ -24,6 +24,8 @@ type fakeDocker struct {
 	containers map[string]*fakeContainer // key: context + "/" + name
 	calls      []string
 	memTotal   int64
+	// composeConfig is returned for `compose … config --format json`.
+	composeConfig string
 }
 
 type fakeContainer struct {
@@ -180,6 +182,11 @@ func (f *fakeDocker) Run(_ context.Context, _ io.Reader, args ...string) ([]byte
 		return nil, nil
 	case strings.HasPrefix(j, "compose -p "):
 		return nil, nil
+	case strings.HasPrefix(j, "compose --project-directory ") && strings.HasSuffix(j, "config --format json"):
+		if f.composeConfig == "" {
+			return nil, cmdErr(args, "no configuration file provided: not found")
+		}
+		return []byte(f.composeConfig), nil
 	}
 	return nil, cmdErr(args, "fakeDocker: unexpected command: "+j)
 }
