@@ -581,7 +581,7 @@ func checkUnlabeled(ctx context.Context, s *clientState) Outcome {
 	if u.Containers+u.Volumes+u.Networks == 0 {
 		return ok("no unlabeled containers, volumes or networks")
 	}
-	return info("%d container(s), %d volume(s), %d network(s) without dol labels; dol never deletes them (list: `docker --context %s ps -a --filter label=%s!=true`)",
+	return info("%d container(s), %d volume(s), %d network(s) without dol labels; dol never deletes them (list: `docker --context %s ps -a --format '{{.Names}} {{.Label \"%s\"}}'`, unlabeled ones show no \"true\")",
 		u.Containers, u.Volumes, u.Networks, s.node.DockerContext, v1.LabelManaged)
 }
 

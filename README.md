@@ -31,7 +31,7 @@ Under active development; see the [implementation brief](docs/IMPLEMENTATION_BRI
 1. **Node (Windows 11):** run `deploy/windows/setup.ps1` as admin, then `deploy/linux/install.sh` inside the WSL distro. For a Linux node, run only `install.sh`. See [docs/setup-windows.md](docs/setup-windows.md).
 2. **Mac:** install `dol`, then run `dol init` and follow the prompts. It adds the SSH host, creates the docker context, runs `dol doctor` and registers the MCP server:
    ```sh
-   claude mcp add docker-offload-lan -s user -- dol mcp
+   claude mcp add -s user docker-offload-lan -- dol mcp
    ```
 3. Append [`rules/agent.md`](rules/agent.md) to your `CLAUDE.md`.
 
