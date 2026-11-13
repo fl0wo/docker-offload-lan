@@ -203,7 +203,7 @@ func TestGoldenPathRealHardware(t *testing.T) {
 			_ = os.MkdirAll(d, 0o755)
 			_ = os.WriteFile(filepath.Join(d, "Dockerfile"), []byte(fmt.Sprintf(
 				"FROM busybox:1.37\nRUN mkdir -p /www && echo hello-%s > /www/index.html\nCMD [\"httpd\",\"-f\",\"-p\",\"8080\",\"-h\",\"/www\"]\n", name)), 0o644)
-			a.sh(fmt.Sprintf("%s build -t %s:e2e %s", acq.Commands.Docker, name, d))
+			a.sh(fmt.Sprintf("%s build %s -t %s:e2e %s", acq.Commands.Docker, acq.Commands.LabelFlags, name, d))
 			if r := a.call("dol_kind_load", map[string]any{"lease_id": lease, "cluster": "e2e", "images": []string{name + ":e2e"}}); r.IsError {
 				t.Fatal(text(r))
 			}
@@ -231,7 +231,7 @@ func TestGoldenPathRealHardware(t *testing.T) {
 	rel := ok[v1.ReleaseResult](t, a.call("dol_release", map[string]any{"lease_id": lease}))
 	released = true
 	t.Logf("step 7: %s", text(a.call("dol_status", map[string]any{})))
-	out := a.sh(fmt.Sprintf("%s ps -a --filter label=%s=%s -q", acq.Commands.Docker, v1.LabelLease, lease))
+	out := a.sh(fmt.Sprintf("%s ps -a --filter label=%s=%s -q; %s image ls --filter label=%s=%s -q", acq.Commands.Docker, v1.LabelLease, lease, acq.Commands.Docker, v1.LabelLease, lease))
 	if strings.TrimSpace(out) != "" || len(rel.Removed.Errors) > 0 {
 		t.Fatalf("step 7: resources left: %s %v", out, rel.Removed.Errors)
 	}

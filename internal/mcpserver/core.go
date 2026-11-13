@@ -539,7 +539,7 @@ func nextSteps(l v1.ClientLease, cmd v1.Commands) []string {
 	case v1.WorkloadKind:
 		steps = append(steps, "Create the cluster with dol_kind_create (lease_id "+l.ID+"); it returns the kubectl prefix to use.")
 	case v1.WorkloadBuild:
-		steps = append(steps, fmt.Sprintf("Build with `%s build -t <tag> .` so the image is built natively where it will run.", cmd.Docker))
+		steps = append(steps, fmt.Sprintf("Build with `%s build %s -t <tag> .` so the image is built natively where it will run and removed on release.", cmd.Docker, cmd.LabelFlags))
 	default:
 		steps = append(steps, fmt.Sprintf("Run containers with `%s run -d %s -p 127.0.0.1:<port>:<port> <image>`.", cmd.Docker, cmd.LabelFlags))
 	}
@@ -548,7 +548,7 @@ func nextSteps(l v1.ClientLease, cmd v1.Commands) []string {
 			cmd.DockerProxied, cmd.ComposeProxied))
 	}
 	steps = append(steps,
-		"Add the label_flags to every `docker run`, `docker network create` and `docker volume create`; dol only stops, removes and cleans up labeled resources.",
+		"Add the label_flags to every `docker run`, `docker build`, `docker network create` and `docker volume create`; dol only stops, removes and cleans up labeled resources.",
 		"When finished, call dol_release with lease_id "+l.ID+".")
 	return steps
 }

@@ -178,7 +178,7 @@ func (f *fakeDocker) Run(_ context.Context, _ io.Reader, args ...string) ([]byte
 			b.WriteByte('\n')
 		}
 		return []byte(b.String()), nil
-	case strings.HasPrefix(j, "network ls") || strings.HasPrefix(j, "volume ls"):
+	case strings.HasPrefix(j, "network ls") || strings.HasPrefix(j, "volume ls") || strings.HasPrefix(j, "image ls"):
 		return nil, nil
 	case strings.HasPrefix(j, "compose -p "):
 		return nil, nil

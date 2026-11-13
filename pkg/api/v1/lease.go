@@ -173,9 +173,11 @@ type HeartbeatResponse struct {
 // Inventory lists concrete resources, either owned (GET …/resources) or
 // removed (DELETE …).
 type Inventory struct {
-	Containers      []string `json:"containers"`
-	Networks        []string `json:"networks"`
-	Volumes         []string `json:"volumes"`
+	Containers []string `json:"containers"`
+	Networks   []string `json:"networks"`
+	Volumes    []string `json:"volumes"`
+	// Images built with the lease's label (ADR-0037). Optional for old nodes.
+	Images          []string `json:"images,omitempty"`
 	KindClusters    []string `json:"kind_clusters"`
 	ComposeProjects []string `json:"compose_projects"`
 	SyncDirs        []string `json:"sync_dirs"`
@@ -185,7 +187,7 @@ type Inventory struct {
 
 // Empty reports whether the inventory has no resources.
 func (i Inventory) Empty() bool {
-	return len(i.Containers)+len(i.Networks)+len(i.Volumes)+len(i.KindClusters)+
+	return len(i.Containers)+len(i.Networks)+len(i.Volumes)+len(i.Images)+len(i.KindClusters)+
 		len(i.ComposeProjects)+len(i.SyncDirs) == 0
 }
 

@@ -273,12 +273,13 @@ const (
 	KindContainer ObjectKind = "container"
 	KindNetwork   ObjectKind = "network"
 	KindVolume    ObjectKind = "volume"
+	KindImage     ObjectKind = "image"
 )
 
 // Labels returns the labels of one object.
 func (d *Docker) Labels(ctx context.Context, kind ObjectKind, ref string) (map[string]string, error) {
 	format := "{{json .Labels}}"
-	if kind == KindContainer {
+	if kind == KindContainer || kind == KindImage {
 		format = "{{json .Config.Labels}}"
 	}
 	out, err := d.run(ctx, string(kind), "inspect", "--format", format, "--", ref)
@@ -402,7 +403,56 @@ func (d *Docker) TeardownLease(ctx context.Context, leaseID string) v1.Inventory
 		}
 		inv.Volumes = append(inv.Volumes, v.Name)
 	}
+	// Images built for the lease (`docker build --label …` from label_flags):
+	// last, once no container of the lease uses them. Never forced: an image
+	// another lease's container still uses stays (reported, not an error).
+	imgs, err := d.Images(ctx, f)
+	if err != nil {
+		fail("listing images: %v", err)
+	}
+	for _, im := range imgs {
+		if _, err := d.RequireOwned(ctx, KindImage, im.ID, leaseID); err != nil {
+			if v1.CodeOf(err) != v1.CodeNotFound {
+				fail("image %s: %v", im.Name, err)
+			}
+			continue
+		}
+		if _, err := d.run(ctx, "image", "rm", "--", im.ID); err != nil && !IsNotFound(err) {
+			fail("removing image %s: %v", im.Name, err)
+			continue
+		}
+		inv.Images = append(inv.Images, im.Name)
+	}
 	return inv
+}
+
+// Image is a row of `docker image ls`.
+type Image struct {
+	ID   string
+	Name string // repository:tag, or the short id for untagged images
+}
+
+// Images lists images matching filters (one row per image id).
+func (d *Docker) Images(ctx context.Context, filters ...string) ([]Image, error) {
+	args := append([]string{"image", "ls", "--no-trunc", "--format", "{{.ID}}\t{{.Repository}}:{{.Tag}}"}, filterArgs(filters)...)
+	out, err := d.run(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var res []Image
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		id, name, _ := strings.Cut(l, "\t")
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if name == "<none>:<none>" {
+			name = strings.TrimPrefix(id, "sha256:")[:12]
+		}
+		res = append(res, Image{ID: id, Name: name})
+	}
+	return res, nil
 }
 
 // LeaseInventory lists resources labeled with leaseID without changing them.
@@ -429,6 +479,13 @@ func (d *Docker) LeaseInventory(ctx context.Context, leaseID string) (v1.Invento
 	}
 	for _, v := range vs {
 		inv.Volumes = append(inv.Volumes, v.Name)
+	}
+	imgs, err := d.Images(ctx, f)
+	if err != nil {
+		return inv, err
+	}
+	for _, im := range imgs {
+		inv.Images = append(inv.Images, im.Name)
 	}
 	return inv, nil
 }

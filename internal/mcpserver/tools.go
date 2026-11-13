@@ -17,7 +17,7 @@ import (
 const Instructions = `docker-offload-lan runs your Docker work on a LAN node (or falls back to this laptop) so the laptop's RAM stays free.
 1. Call dol_acquire before starting any container, compose stack, kind cluster or heavy build, with a realistic est_memory_gb.
 2. Put the returned commands.docker / commands.compose prefix in front of EVERY docker command; environment variables do not persist between commands.
-3. Add commands.label_flags to every docker run, network create and volume create; dol only stops, removes and cleans up labeled resources.
+3. Add commands.label_flags to every docker run, build, network create and volume create; dol only stops, removes and cleans up labeled resources.
 4. Build images with the same prefix (build where you run); never docker save | docker load across machines. Publish ports on 127.0.0.1.
 5. If placement is "local" you are on the laptop: keep the footprint small. Use dol_resize when the workload grows.
 6. When finished call dol_release; use dol_pin only if the user asks to keep things running.`
