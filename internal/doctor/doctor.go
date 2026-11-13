@@ -164,6 +164,9 @@ func (r ExecRunner) Run(ctx context.Context, name string, args ...string) (strin
 	cmd.Stdout, cmd.Stderr = &so, &se
 	cmd.WaitDelay = 2 * time.Second
 	err := cmd.Run()
+	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		err = nil // e.g. an ssh ControlMaster forked by this ssh still holds the pipes
+	}
 	if err != nil && ctx.Err() != nil {
 		err = fmt.Errorf("%w (timed out)", ctx.Err())
 	}

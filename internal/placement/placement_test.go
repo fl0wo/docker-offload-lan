@@ -174,7 +174,7 @@ func (c *countingAPI) Health(ctx context.Context) (*v1.Health, error) {
 	return c.NodeAPI.Health(ctx)
 }
 
-func TestHealthCacheSuccessOnly(t *testing.T) {
+func TestPlacementAlwaysProbesHealth(t *testing.T) {
 	n, s := node(t, "tower", 100, 100)
 	api := &countingAPI{NodeAPI: n.API}
 	n.API = api
@@ -186,13 +186,13 @@ func TestHealthCacheSuccessOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := api.health.Load(); got != 1 {
-		t.Fatalf("successes must be cached: %d health calls", got)
+	// A node that froze since the last success must cost health_timeout,
+	// not lease_request_timeout: placement never trusts a cached success.
+	if got := api.health.Load(); got != 3 {
+		t.Fatalf("placement must probe health every time: %d health calls", got)
 	}
-	now = now.Add(16 * time.Second)
-	_, _ = p.Place(ctx, req(1))
-	if got := api.health.Load(); got != 2 {
-		t.Fatalf("cache must expire after 15s: %d", got)
+	if _, err := p.Health(ctx, n, false); err != nil || api.health.Load() != 3 {
+		t.Fatal("read-only callers may use the cached success")
 	}
 	// Failures are not cached: once the node is back it is used immediately.
 	s.Fake.SetMode(nodefake.ModeError500)

@@ -23,3 +23,8 @@ Brief §7.5 says "cache result 15s" for node health checks and leaves several de
 ## Alternatives
 - Caching failures for 15 s: faster repeated fallbacks, but a recovered node would be ignored for up to 15 s. Rejected.
 - Probing local Docker under `always`: adds 100 ms–1 s to every fallback for little benefit. Rejected.
+
+
+## Amendment (2026-11-13): placement always probes health
+
+The containerized golden-path test froze the node (`docker pause`) right after a successful acquire. With a cached health success, the fallback cost `lease_request_timeout_ms` (5 s) instead of `health_timeout_ms` (2 s). With ControlMaster a probe costs milliseconds, so `Place` now always probes fresh. The 15 s cache remains for read-only views only. Measured after the change: see `test/integration/golden_test.go` (frozen node → local).

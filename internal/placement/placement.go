@@ -3,10 +3,10 @@
 // the fallback policy. It never blocks the agent for longer than the
 // configured timeouts.
 //
-// Health cache (ADR-0020): successful health checks are cached for CacheTTL
-// (15 s) per node; failures are never cached, so a node that comes back is
-// used on the very next acquire. A cached-healthy node whose lease request
-// then fails as unreachable is evicted from the cache.
+// Health cache (ADR-0020, amended): placement always probes health fresh so a
+// frozen node costs at most health_timeout; successful results are cached
+// for CacheTTL (15 s) only for read-only views (dol_status/metadata).
+// Failures are never cached.
 package placement
 
 import (
@@ -254,7 +254,11 @@ func (p *Placer) tryNode(ctx context.Context, n Node, req v1.LeaseRequest) (v1.A
 		a.Millis = ms(p.now().Sub(start))
 		return a, nil, nil
 	}
-	h, err := p.Health(ctx, n, false)
+	// Always probe fresh before asking for a lease (ADR-0020, amended): a
+	// cached success would let a node that froze in the last CacheTTL cost
+	// lease_request_timeout instead of health_timeout. A probe over an
+	// existing ssh ControlMaster costs milliseconds.
+	h, err := p.Health(ctx, n, true)
 	if err != nil {
 		return done(outcomeFor(err), err)
 	}

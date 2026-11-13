@@ -282,6 +282,14 @@ func Start(t *testing.T) *Node {
 		t.Fatal(err)
 	}
 	n.DockerConfig = filepath.Join(dir, "docker")
+	// Keep CLI plugins (compose, buildx) visible with the temp DOCKER_CONFIG.
+	if home, err := os.UserHomeDir(); err == nil {
+		src := filepath.Join(cmpOr(os.Getenv("DOCKER_CONFIG"), filepath.Join(home, ".docker")), "cli-plugins")
+		if _, err := os.Stat(src); err == nil {
+			_ = os.MkdirAll(n.DockerConfig, 0o700)
+			_ = os.Symlink(src, filepath.Join(n.DockerConfig, "cli-plugins"))
+		}
+	}
 	n.Env = []string{"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"), "DOCKER_CONFIG=" + n.DockerConfig}
 
 	if err := n.waitReady(ctx); err != nil {
@@ -397,4 +405,11 @@ func Teardown() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	_, _ = run(ctx, nil, "docker", "rmi", "-f", Image)
+}
+
+func cmpOr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }

@@ -93,3 +93,37 @@ func TestCloseKillsHungProcess(t *testing.T) {
 		t.Fatal("close took too long")
 	}
 }
+
+// A backgrounded ControlMaster forked by ssh inherits the stdout pipe and
+// lives for ControlPersist. Close must unblock a pending Read immediately,
+// and Run must not wait for the forked process (regression: a frozen node
+// delayed fallback by ~ControlPersist instead of health_timeout_ms).
+func TestForkedMasterHoldingPipesDoesNotBlock(t *testing.T) {
+	o := Options{Binary: fakeSSH(t)}
+	c, err := o.DialStdio(context.Background(), "host", "sh", "-c", "sleep 30 & sleep 30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readDone := make(chan error, 1)
+	go func() { _, err := c.Read(make([]byte, 1)); readDone <- err }()
+	time.Sleep(200 * time.Millisecond)
+	start := time.Now()
+	_ = c.Close()
+	select {
+	case <-readDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Read still blocked 3s after Close")
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("Close+Read took %s", d)
+	}
+
+	start = time.Now()
+	out, err := o.Run(context.Background(), "host", "sh", "-c", "sleep 30 & echo hi")
+	if err != nil || strings.TrimSpace(string(out)) != "hi" {
+		t.Fatalf("%q %v", out, err)
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("Run waited for the forked process: %s", d)
+	}
+}

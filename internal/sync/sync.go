@@ -5,6 +5,7 @@ package sync
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/fl0wo/docker-offload-lan/internal/sshx"
 	v1 "github.com/fl0wo/docker-offload-lan/pkg/api/v1"
@@ -133,7 +135,14 @@ func Run(ctx context.Context, o Options) error {
 	cmd := exec.CommandContext(ctx, o.Rsync, Args(o)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	// rsync's ssh may fork a ControlMaster that inherits stderr; don't wait
+	// for it (ControlPersist can be minutes).
+	cmd.WaitDelay = 2 * time.Second
+	err = cmd.Run()
+	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		err = nil
+	}
+	if err != nil {
 		return v1.Errorf(v1.CodeInternal, "is rsync installed on the node? (`dol doctor`)", "rsync to %s:%s failed: %v: %s",
 			o.SSHHost, o.RemoteDir, err, strings.TrimSpace(stderr.String()))
 	}

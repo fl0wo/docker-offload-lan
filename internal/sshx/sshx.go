@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -65,9 +66,15 @@ func (o Options) Command(ctx context.Context, host string, remoteCmd ...string) 
 // stderr and are classified with Classify.
 func (o Options) Run(ctx context.Context, host string, remoteCmd ...string) ([]byte, error) {
 	cmd := o.Command(ctx, host, remoteCmd...)
+	// A ControlMaster forked by this ssh (ControlPersist) may inherit the
+	// output pipes; don't wait for it to exit.
+	cmd.WaitDelay = time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
+	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		err = nil // ssh exited 0; only a forked ControlMaster still holds the pipes
+	}
 	if err != nil {
 		return stdout.Bytes(), &Error{Host: host, Err: err, Stderr: strings.TrimSpace(stderr.String()), Ctx: ctx.Err()}
 	}
@@ -143,6 +150,7 @@ type StdioConn struct {
 	host   string
 
 	closeOnce sync.Once
+	closed    atomic.Bool
 	waitOnce  sync.Once
 	waitErr   error
 	done      chan struct{}
@@ -165,6 +173,8 @@ func (o Options) DialStdio(ctx context.Context, host string, remoteCmd ...string
 	}
 	c := &StdioConn{cmd: cmd, stdin: stdin, stdout: stdout, stderr: &capBuffer{max: 8 << 10}, host: host, done: make(chan struct{})}
 	cmd.Stderr = c.stderr
+	// Don't let a forked ControlMaster holding our pipes block Wait.
+	cmd.WaitDelay = time.Second
 	setProcessGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, &Error{Host: host, Err: err}
@@ -180,7 +190,7 @@ func (c *StdioConn) wait() error {
 
 func (c *StdioConn) Read(p []byte) (int, error) {
 	n, err := c.stdout.Read(p)
-	if err != nil && n == 0 {
+	if err != nil && n == 0 && !c.closed.Load() {
 		// Surface ssh's stderr when the remote side ended without data.
 		select {
 		case <-c.done:
@@ -196,15 +206,23 @@ func (c *StdioConn) Read(p []byte) (int, error) {
 func (c *StdioConn) Write(p []byte) (int, error) { return c.stdin.Write(p) }
 
 // Close terminates the ssh process.
+//
+// It never blocks: a backgrounded ControlMaster forked by this ssh can
+// inherit the stdout pipe and keep it open for ControlPersist (minutes), so
+// we close our read end ourselves instead of waiting for EOF, and reap the
+// process asynchronously.
 func (c *StdioConn) Close() error {
 	c.closeOnce.Do(func() {
+		c.closed.Store(true)
 		_ = c.stdin.Close()
-		select {
-		case <-c.done:
-		case <-time.After(500 * time.Millisecond):
-			killProcess(c.cmd)
-			<-c.done
-		}
+		_ = c.stdout.Close()
+		go func() {
+			select {
+			case <-c.done:
+			case <-time.After(500 * time.Millisecond):
+				killProcess(c.cmd)
+			}
+		}()
 	})
 	return nil
 }
