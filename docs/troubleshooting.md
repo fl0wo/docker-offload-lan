@@ -128,3 +128,20 @@ WSL interop lets the node read Windows' free memory (`windows_memory_check`). If
 - **A container port is not reachable from the Mac:** publish it on the node as `-p 127.0.0.1:8080:80` and use `dol_forward`. A plain `-p 8080:80` binds 0.0.0.0 on the node, which makes it reachable from the whole LAN (see [security.md](security.md)).
 - **WSL stops when idle:** check `[general] instanceIdleTimeout=-1` in `%USERPROFILE%\.wslconfig` and the scheduled task "docker-offload-lan keep WSL alive" (Task Scheduler → History).
 - **`install.sh` stops after enabling systemd:** this is expected. Run `wsl --shutdown` in Windows, then run the script again.
+
+## WSL downloads are much slower than on Windows
+
+Symptom: `curl` inside the WSL distro is many times slower than `curl.exe` on Windows; the first `dol_kind_create` times out pulling `kindest/node`.
+
+On the first real tower (Windows 10, TP-Link USB Wi-Fi) WSL got 68 KB/s while Windows got 2 MB/s. Two fixes, both measured there:
+
+1. Disable Large Send Offload on the WSL adapter (68 KB/s → ~1 MB/s): `Disable-NetAdapterLso -Name "vEthernet (WSL)"` in an admin PowerShell. The adapter is recreated with the WSL VM, so run `setup.ps1 -DisableWslLso` to reapply it at every boot.
+2. If name resolution inside WSL times out (`getent hosts example.com` hangs), WSL's NAT DNS proxy is not answering. Use static resolvers in the distro (→ 2.7 MB/s):
+   ```sh
+   sudo sh -c 'printf "[network]\ngenerateResolvConf = false\n" >> /etc/wsl.conf; rm -f /etc/resolv.conf; printf "nameserver 192.168.1.1\nnameserver 1.1.1.1\n" > /etc/resolv.conf'
+   ```
+   (use your router's IP). Do **not** disable RSC on `vEthernet (WSL)`: on that tower it cut WSL's DNS off entirely.
+
+## scp to the node fails with "Connection closed"
+
+The dol sshd configuration on port 2222 serves dol's own traffic (ssh exec, port forwards, rsync). Modern `scp` uses the SFTP subsystem; use `ssh <node> 'cat > /path' < file` instead, or `scp -O` (legacy protocol).

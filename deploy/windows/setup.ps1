@@ -39,6 +39,10 @@ param(
     # Firewall profiles for the Hyper-V rule. Private keeps the port closed on public networks.
     [ValidateSet('Any', 'Private', 'Domain', 'Public')][string[]]$FirewallProfiles = @('Private', 'Domain'),
     [switch]$NoSleep,
+    # Disable Large Send Offload on the "vEthernet (WSL)" adapter at every boot.
+    # On a Windows 10 tower with a USB Wi-Fi adapter this took downloads inside
+    # WSL from 68 KB/s to ~1-2.7 MB/s (Windows itself: ~2 MB/s). ADR-0036.
+    [switch]$DisableWslLso,
     [switch]$NoKeepAliveTask,
     # auto: mirrored on Windows 11 22H2+ (build 22621), nat otherwise (Windows 10).
     # nat: the Mac reaches WSL through Windows' OpenSSH server as a jump host
@@ -453,6 +457,28 @@ function Set-JumpHost {
     } else { Write-Step unchanged "sshd_config: Match User $JumpUser" }
 }
 
+function Register-WslLsoTask {
+    [CmdletBinding(SupportsShouldProcess = $true)] param()
+    $name = 'docker-offload-lan WSL LSO off'
+    if (-not $DisableWslLso) {
+        if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) { Write-Step unchanged "scheduled task '$name' (kept; remove with Unregister-ScheduledTask)" }
+        else { Write-Step skipped 'WSL adapter LSO (pass -DisableWslLso if downloads inside WSL are much slower than on Windows)' }
+        return
+    }
+    if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) { Write-Step unchanged "scheduled task '$name'"; return }
+    # The adapter is recreated with the WSL VM; wait for it, then switch LSO off.
+    $cmd = 'for ($i = 0; $i -lt 120; $i++) { if (Get-NetAdapter -Name ''vEthernet (WSL)'' -ErrorAction SilentlyContinue) { Disable-NetAdapterLso -Name ''vEthernet (WSL)'' -IPv4 -IPv6; break }; Start-Sleep -Seconds 5 }'
+    if ($PSCmdlet.ShouldProcess($name, 'register scheduled task (SYSTEM, at startup): disable LSO on vEthernet (WSL)')) {
+        $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -NonInteractive -Command `"$cmd`""
+        $trigger = New-ScheduledTaskTrigger -AtStartup
+        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+        Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal `
+            -Description 'docker-offload-lan: disable Large Send Offload on the WSL adapter (slow downloads inside WSL otherwise).' | Out-Null
+        if (Get-NetAdapter -Name 'vEthernet (WSL)' -ErrorAction SilentlyContinue) { Disable-NetAdapterLso -Name 'vEthernet (WSL)' -IPv4 -IPv6 }
+        Write-Step changed "scheduled task '$name' (and LSO off on vEthernet (WSL) now)"
+    } else { Write-Step 'would change' "scheduled task '$name'" }
+}
+
 function Register-KeepAliveTask {
     [CmdletBinding(SupportsShouldProcess = $true)] param()
     if ($NoKeepAliveTask) { Write-Step skipped 'keep-alive scheduled task (-NoKeepAliveTask)'; return }
@@ -557,6 +583,7 @@ function Invoke-Setup {
     Set-JumpHost
     if ($script:NetMode -eq 'mirrored') { Test-PortFree }
     Register-KeepAliveTask
+    Register-WslLsoTask
     Set-NoSleep
     if ($script:WslConfigChanged -and $Restart -and $PSCmdlet.ShouldProcess('WSL', 'wsl --shutdown (apply .wslconfig)')) {
         & wsl.exe --shutdown
