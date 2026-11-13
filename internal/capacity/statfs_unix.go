@@ -11,5 +11,5 @@ func StatfsFree(path string) (int64, error) {
 	if err := unix.Statfs(path, &st); err != nil {
 		return 0, err
 	}
-	return int64(st.Bavail) * int64(st.Bsize), nil //nolint:gosec // block counts fit int64 on real disks
+	return int64(st.Bavail) * int64(st.Bsize), nil //nolint:gosec,unconvert // block counts fit int64; Bsize is int64 on linux, uint32 on darwin
 }

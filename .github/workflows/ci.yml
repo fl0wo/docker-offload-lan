@@ -43,7 +43,9 @@ jobs:
           go-version-file: go.mod
       - uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          # Pinned: new releases add rules (v2.15 added taint analysis) and must
+          # not break CI unannounced. Bump deliberately.
+          version: v2.15.0
   integration:
     # Containerized fake node (sshd + dockerd + dol node serve), see test/integration.
     runs-on: ubuntu-latest

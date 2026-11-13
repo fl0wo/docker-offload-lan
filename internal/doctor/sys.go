@@ -29,7 +29,7 @@ func diskFree(p string) (free, total uint64, err error) {
 	if err := syscall.Statfs(p, &st); err != nil {
 		return 0, 0, err
 	}
-	bs := uint64(st.Bsize) //nolint:unconvert // int64 on linux, uint32 on darwin
+	bs := uint64(st.Bsize) //nolint:unconvert,gosec // int64 on linux, uint32 on darwin; never negative
 	return st.Bavail * bs, st.Blocks * bs, nil
 }
 
