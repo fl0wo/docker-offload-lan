@@ -7,6 +7,14 @@ linters:
     - nilerr
     - unconvert
   settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (*os.File).Close
+        - os.Remove
+        - os.RemoveAll
     gosec:
       excludes:
         - G204 # subprocess with variable args: we shell out to ssh/docker/kind by design; args are validated
@@ -14,4 +22,6 @@ linters:
   exclusions:
     rules:
       - path: _test\.go
-        linters: [errcheck, gosec]
+        linters: [errcheck, gosec, unused]
+      - path: test/integration/
+        linters: [gosec]

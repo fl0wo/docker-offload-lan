@@ -21,8 +21,8 @@ import (
 func clientCommands() []*cobra.Command {
 	return []*cobra.Command{
 		newMCPCmd(),
-		notYet("init", "Interactive setup: add a node, ssh config, docker context, MCP registration", "M1"),
-		notYet("doctor", "Diagnose every link between this machine and its nodes", "M1"),
+		newInitCmd(),
+		newDoctorCmd(),
 		newStatusCmd(),
 		newLeasesCmd(),
 		newReleaseCmd(),

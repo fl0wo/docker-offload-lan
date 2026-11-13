@@ -31,9 +31,9 @@ func okProbes() initProbes {
 	}
 }
 
-func initFlagsFor(dir string) initFlags {
+func initFlagsFor(dir string) nodeInitFlags {
 	d := config.DefaultNode()
-	return initFlags{
+	return nodeInitFlags{
 		path: filepath.Join(dir, "etc", "node.yaml"), name: "tower", socket: filepath.Join(dir, "run", "node.sock"),
 		dataDir: filepath.Join(dir, "data"), syncRoot: filepath.Join(dir, "srv"), provider: "auto",
 		reserveGB: 4, minDiskGB: 30, accessMode: "tunnel", kindBinary: d.Kind.Binary,

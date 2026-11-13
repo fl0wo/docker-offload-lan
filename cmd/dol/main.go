@@ -37,14 +37,3 @@ func newRootCmd() *cobra.Command {
 	}
 	return root
 }
-
-// notYet is a placeholder for commands implemented in later milestones.
-func notYet(use, short, milestone string) *cobra.Command {
-	return &cobra.Command{
-		Use:   use,
-		Short: short,
-		RunE: func(*cobra.Command, []string) error {
-			return fmt.Errorf("%s is not implemented yet (milestone %s)", use, milestone)
-		},
-	}
-}

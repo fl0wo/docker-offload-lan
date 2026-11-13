@@ -26,6 +26,14 @@ jobs:
           for t in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do
             CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go build -o /dev/null ./cmd/dol
           done
+  scripts:
+    # Setup scripts: shellcheck and pwsh are preinstalled on ubuntu-latest.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: shellcheck deploy/linux/install.sh test/integration/entrypoint.sh
+      - run: bash -n deploy/linux/install.sh
+      - run: pwsh -NoProfile -NonInteractive -File deploy/windows/tests/WslConfig.Tests.ps1
   lint:
     runs-on: ubuntu-latest
     steps:

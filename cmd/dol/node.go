@@ -150,7 +150,7 @@ func socketFromConfig(path string) string {
 
 // ---- dol node init -------------------------------------------------------------
 
-type initFlags struct {
+type nodeInitFlags struct {
 	path, name, socket, dataDir, syncRoot, provider, accessMode, kindBinary, lanAddress string
 	reserveGB, minDiskGB                                                                float64
 	force, dryRun                                                                       bool
@@ -172,7 +172,7 @@ func defaultProbes() initProbes {
 }
 
 func newNodeInitCmd() *cobra.Command {
-	var f initFlags
+	var f nodeInitFlags
 	c := &cobra.Command{
 		Use:   "init",
 		Short: "Write the node config, create data directories and check Docker and kind",
@@ -209,7 +209,7 @@ func shortHostname(h string) string {
 	return h
 }
 
-func (f initFlags) apply(c *config.NodeConfig) {
+func (f nodeInitFlags) apply(c *config.NodeConfig) {
 	c.Name, c.Socket, c.DataDir, c.SyncRoot = f.name, f.socket, f.dataDir, f.syncRoot
 	c.Capacity.Provider = f.provider
 	c.Capacity.ReserveMemoryGB, c.Capacity.MinFreeDiskGB = f.reserveGB, f.minDiskGB
@@ -233,7 +233,7 @@ func renderNodeConfig(c *config.NodeConfig) ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
-func runNodeInit(ctx context.Context, f initFlags, changed func(string) bool, out io.Writer, p initProbes) error {
+func runNodeInit(ctx context.Context, f nodeInitFlags, changed func(string) bool, out io.Writer, p initProbes) error {
 	say := func(format string, a ...any) { _, _ = fmt.Fprintf(out, format+"\n", a...) }
 	prefix := ""
 	if f.dryRun {
