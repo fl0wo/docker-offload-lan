@@ -566,6 +566,19 @@ func RewriteKubeconfigServer(kubeconfig []byte, server string) ([]byte, error) {
 	if n == 0 {
 		return nil, fmt.Errorf("kubeconfig from kind has no clusters[].cluster.server")
 	}
+	// kind writes client certificates only. Credential plugins and file
+	// references would make kubectl on this machine run commands or read
+	// local files chosen by the node.
+	if users := mapGet(root.Content[0], "users"); users != nil {
+		for _, item := range users.Content {
+			for _, key := range []string{"exec", "auth-provider", "tokenFile", "client-certificate", "client-key"} {
+				if mapGet(mapGet(item, "user"), key) != nil {
+					return nil, v1.Errorf(v1.CodeKindFailed, "check the node: kind never writes these; `dol doctor` and the node agent logs",
+						"refusing kubeconfig from the node: users[].user.%s would run a command or read a file on this machine", key)
+				}
+			}
+		}
+	}
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
