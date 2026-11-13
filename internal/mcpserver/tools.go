@@ -29,7 +29,7 @@ const (
 		"Use it when unsure whether the remote node is up, before a large dol_acquire, or to recover a lease_id. Takes no input."
 	descAcquire = "Call before starting containers, compose stacks, kind clusters or heavy builds. Pass workload and a generous est_memory_gb " +
 		"(small container 0.5; compose stack 1-4; kind ≈ 2 + 0.5 per service; JVM services ≥1 each). Returns placement (remote node or local fallback) " +
-		"with the reason, lease_id, and commands: use the docker/compose prefix in every command and add label_flags to every docker run/network/volume create."
+		"with the reason, lease_id, and commands: use the docker/compose prefix in every command and add label_flags to every docker run/build/network/volume create."
 	descRelease = "Call when done with a lease: tears down every labeled container, network and volume and tracked compose project of the lease " +
 		"(remote or local), closes its tunnels and deletes its kubeconfigs. Pass lease_id; keep_sync_dir=true keeps synced files on the node. Returns the removed inventory."
 	descList = "List leases and the Docker resources they own (label-scoped, local and remote): containers with state and ports, networks, volumes, " +
