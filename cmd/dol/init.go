@@ -125,13 +125,15 @@ func runInit(cmd *cobra.Command, f initFlags) error {
 		return err
 	}
 	fmt.Fprintf(out, "Setting up node %s (%s@%s:%d)\n\n", f.name, f.user, f.host, f.port)
+	// The docker context goes first: it is the step that can refuse (a
+	// foreign context with the same name), and then nothing else is written.
 	steps := []func() (clientsetup.Change, error){
-		func() (clientsetup.Change, error) { return clientsetup.UpsertHostBlock(sp, spec) },
-		func() (clientsetup.Change, error) { return clientsetup.EnsureInclude(sp, time.Now()) },
-		func() (clientsetup.Change, error) { return clientsetup.UpsertClientNode(f.configPath, node) },
 		func() (clientsetup.Change, error) {
 			return clientsetup.EnsureDockerContext(ctx, doctor.ExecRunner{}, node.DockerContext, node.SSHHost)
 		},
+		func() (clientsetup.Change, error) { return clientsetup.UpsertHostBlock(sp, spec) },
+		func() (clientsetup.Change, error) { return clientsetup.EnsureInclude(sp, time.Now()) },
+		func() (clientsetup.Change, error) { return clientsetup.UpsertClientNode(f.configPath, node) },
 	}
 	for _, s := range steps {
 		c, err := s()
